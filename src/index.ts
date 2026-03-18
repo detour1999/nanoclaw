@@ -41,6 +41,7 @@ import {
   setSession,
   storeChatMetadata,
   storeMessage,
+  storeMessageDirect,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -69,6 +70,29 @@ let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
+
+/** Generate a unique ID for outgoing bot messages. */
+function genBotMsgId(): string {
+  return `bot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Store an outgoing bot message in the DB so Fred can query full threads. */
+function storeBotOutgoing(
+  chatJid: string,
+  content: string,
+  senderName: string,
+): void {
+  storeMessageDirect({
+    id: genBotMsgId(),
+    chat_jid: chatJid,
+    sender: 'bot',
+    sender_name: senderName,
+    content,
+    timestamp: new Date().toISOString(),
+    is_from_me: true,
+    is_bot_message: true,
+  });
+}
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
@@ -224,6 +248,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
         await channel.sendMessage(chatJid, text);
+        storeBotOutgoing(chatJid, text, group.name);
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -611,22 +636,33 @@ async function main(): Promise<void> {
         return;
       }
       const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text);
+      if (text) {
+        await channel.sendMessage(jid, text);
+        const agentName = registeredGroups[jid]?.name || ASSISTANT_NAME;
+        storeBotOutgoing(jid, text, agentName);
+      }
     },
   });
   startIpcWatcher({
-    sendMessage: (jid, text) => {
+    sendMessage: async (jid, text) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid, text);
+      await channel.sendMessage(jid, text);
+      const agentName = registeredGroups[jid]?.name || ASSISTANT_NAME;
+      storeBotOutgoing(jid, text, agentName);
     },
-    sendDocument: (jid, filePath, caption) => {
+    sendDocument: async (jid, filePath, caption) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       if (!channel.sendDocument) {
-        throw new Error(`Channel ${channel.name} does not support sendDocument`);
+        throw new Error(
+          `Channel ${channel.name} does not support sendDocument`,
+        );
       }
-      return channel.sendDocument(jid, filePath, caption);
+      await channel.sendDocument(jid, filePath, caption);
+      const agentName = registeredGroups[jid]?.name || ASSISTANT_NAME;
+      const filename = filePath.split('/').pop() || 'file';
+      storeBotOutgoing(jid, `[Document: ${filename}]${caption ? ` ${caption}` : ''}`, agentName);
     },
     registeredGroups: () => registeredGroups,
     registerGroup,

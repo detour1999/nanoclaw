@@ -662,7 +662,11 @@ async function main(): Promise<void> {
       await channel.sendDocument(jid, filePath, caption);
       const agentName = registeredGroups[jid]?.name || ASSISTANT_NAME;
       const filename = filePath.split('/').pop() || 'file';
-      storeBotOutgoing(jid, `[Document: ${filename}]${caption ? ` ${caption}` : ''}`, agentName);
+      storeBotOutgoing(
+        jid,
+        `[Document: ${filename}]${caption ? ` ${caption}` : ''}`,
+        agentName,
+      );
     },
     registeredGroups: () => registeredGroups,
     registerGroup,

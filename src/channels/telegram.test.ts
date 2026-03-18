@@ -747,9 +747,10 @@ describe('TelegramChannel', () => {
         }),
       );
       // Should use highest-res photo (last in array)
-      expect(
-        (channel as any).downloadTelegramFile,
-      ).toHaveBeenCalledWith('large', expect.stringContaining('tg-42-photo.jpg'));
+      expect((channel as any).downloadTelegramFile).toHaveBeenCalledWith(
+        'large',
+        expect.stringContaining('tg-42-photo.jpg'),
+      );
     });
 
     it('includes container path for document downloads', async () => {
@@ -843,9 +844,7 @@ describe('TelegramChannel', () => {
       });
       await triggerMediaMessage('message:document', ctx);
 
-      expect(
-        (channel as any).downloadTelegramFile,
-      ).toHaveBeenCalledWith(
+      expect((channel as any).downloadTelegramFile).toHaveBeenCalledWith(
         'doc456',
         expect.stringContaining('tg-77-my_file__final___v2_.pdf'),
       );
@@ -856,10 +855,7 @@ describe('TelegramChannel', () => {
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const downloadSpy = vi.spyOn(
-        channel as any,
-        'downloadTelegramFile',
-      );
+      const downloadSpy = vi.spyOn(channel as any, 'downloadTelegramFile');
 
       const ctx1 = createMediaCtx({
         extra: { sticker: { emoji: '😎' } },

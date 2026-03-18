@@ -330,12 +330,7 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:document', (ctx) => {
       const doc = ctx.message.document;
       const name = doc?.file_name || 'file';
-      return handleMediaMessage(
-        ctx,
-        `[Document: ${name}]`,
-        doc?.file_id,
-        name,
-      );
+      return handleMediaMessage(ctx, `[Document: ${name}]`, doc?.file_id, name);
     });
     // Sticker, location, contact — no file download, just placeholders
     this.bot.on('message:sticker', (ctx) => {

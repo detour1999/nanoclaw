@@ -13,7 +13,11 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
-  sendDocument: (jid: string, filePath: string, caption?: string) => Promise<void>;
+  sendDocument: (
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -498,7 +502,10 @@ export async function processTaskIpc(
       }
       if (data.command && data.requestId) {
         // Write response file so the container can poll for it synchronously
-        const responseDir = path.join(resolveGroupIpcPath(sourceGroup), 'responses');
+        const responseDir = path.join(
+          resolveGroupIpcPath(sourceGroup),
+          'responses',
+        );
         fs.mkdirSync(responseDir, { recursive: true });
         const responseFile = path.join(responseDir, `${data.requestId}.json`);
 
@@ -510,8 +517,7 @@ export async function processTaskIpc(
           const sshResult = await executeSSHLocalhost(data.command);
           fs.writeFileSync(responseFile, JSON.stringify({ output: sshResult }));
         } catch (error: unknown) {
-          const errMsg =
-            error instanceof Error ? error.message : String(error);
+          const errMsg = error instanceof Error ? error.message : String(error);
           logger.error(
             { command: data.command, error: errMsg },
             'SSH command failed',
@@ -519,10 +525,7 @@ export async function processTaskIpc(
           fs.writeFileSync(responseFile, JSON.stringify({ error: errMsg }));
         }
       } else {
-        logger.warn(
-          { data },
-          'Invalid ssh_localhost request - missing fields',
-        );
+        logger.warn({ data }, 'Invalid ssh_localhost request - missing fields');
       }
       break;
 

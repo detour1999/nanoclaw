@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 // --- Mocks ---
@@ -24,6 +25,11 @@ vi.mock('../logger.js', () => ({
   },
 }));
 
+// Mock group-folder
+vi.mock('../group-folder.js', () => ({
+  resolveGroupFolderPath: vi.fn((folder: string) => `/mock/groups/${folder}`),
+}));
+
 // --- Grammy mock ---
 
 type Handler = (...args: any[]) => any;
@@ -40,6 +46,7 @@ vi.mock('grammy', () => ({
     api = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
+      getFile: vi.fn().mockResolvedValue({ file_path: 'photos/file_0.jpg' }),
     };
 
     constructor(token: string) {
@@ -707,6 +714,165 @@ describe('TelegramChannel', () => {
       await triggerMediaMessage('message:photo', ctx);
 
       expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  // --- Media download ---
+
+  describe('media download', () => {
+    it('includes container path when download succeeds', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      // Mock successful download
+      vi.spyOn(channel as any, 'downloadTelegramFile').mockResolvedValue(true);
+      vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
+
+      const ctx = createMediaCtx({
+        messageId: 42,
+        extra: {
+          photo: [
+            { file_id: 'small', width: 100 },
+            { file_id: 'large', width: 800 },
+          ],
+        },
+      });
+      await triggerMediaMessage('message:photo', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: expect.stringContaining('/workspace/group/media/'),
+        }),
+      );
+      // Should use highest-res photo (last in array)
+      expect(
+        (channel as any).downloadTelegramFile,
+      ).toHaveBeenCalledWith('large', expect.stringContaining('tg-42-photo.jpg'));
+    });
+
+    it('includes container path for document downloads', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      vi.spyOn(channel as any, 'downloadTelegramFile').mockResolvedValue(true);
+      vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
+
+      const ctx = createMediaCtx({
+        messageId: 55,
+        extra: {
+          document: { file_id: 'doc123', file_name: 'report.pdf' },
+        },
+      });
+      await triggerMediaMessage('message:document', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: expect.stringMatching(
+            /\[Document: report\.pdf\] \/workspace\/group\/media\/.*tg-55-report\.pdf/,
+          ),
+        }),
+      );
+    });
+
+    it('includes caption after container path', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      vi.spyOn(channel as any, 'downloadTelegramFile').mockResolvedValue(true);
+      vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
+
+      const ctx = createMediaCtx({
+        messageId: 10,
+        caption: 'Here is the damage',
+        extra: {
+          photo: [{ file_id: 'img1', width: 800 }],
+        },
+      });
+      await triggerMediaMessage('message:photo', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: expect.stringContaining('Here is the damage'),
+        }),
+      );
+    });
+
+    it('falls back to placeholder when download fails', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      vi.spyOn(channel as any, 'downloadTelegramFile').mockResolvedValue(false);
+      vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
+
+      const ctx = createMediaCtx({
+        extra: {
+          photo: [{ file_id: 'broken', width: 800 }],
+        },
+      });
+      await triggerMediaMessage('message:photo', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({ content: '[Photo]' }),
+      );
+    });
+
+    it('sanitizes filenames with special characters', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      vi.spyOn(channel as any, 'downloadTelegramFile').mockResolvedValue(true);
+      vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
+
+      const ctx = createMediaCtx({
+        messageId: 77,
+        extra: {
+          document: {
+            file_id: 'doc456',
+            file_name: 'my file (final) [v2].pdf',
+          },
+        },
+      });
+      await triggerMediaMessage('message:document', ctx);
+
+      expect(
+        (channel as any).downloadTelegramFile,
+      ).toHaveBeenCalledWith(
+        'doc456',
+        expect.stringContaining('tg-77-my_file__final___v2_.pdf'),
+      );
+    });
+
+    it('does not attempt download for sticker/location/contact', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const downloadSpy = vi.spyOn(
+        channel as any,
+        'downloadTelegramFile',
+      );
+
+      const ctx1 = createMediaCtx({
+        extra: { sticker: { emoji: '😎' } },
+      });
+      await triggerMediaMessage('message:sticker', ctx1);
+
+      const ctx2 = createMediaCtx({});
+      await triggerMediaMessage('message:location', ctx2);
+
+      const ctx3 = createMediaCtx({});
+      await triggerMediaMessage('message:contact', ctx3);
+
+      expect(downloadSpy).not.toHaveBeenCalled();
     });
   });
 

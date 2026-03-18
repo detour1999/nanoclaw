@@ -9,10 +9,11 @@ import os from 'os';
 import { logger } from './logger.js';
 
 /** The container runtime binary name. */
-export const CONTAINER_RUNTIME_BIN = 'docker';
+export const CONTAINER_RUNTIME_BIN = process.env.CONTAINER_RUNTIME || 'docker';
 
 /** Hostname containers use to reach the host machine. */
-export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
+export const CONTAINER_HOST_GATEWAY =
+  process.env.CONTAINER_HOST_GATEWAY || 'host.docker.internal';
 
 /**
  * Address the credential proxy binds to.
@@ -64,8 +65,13 @@ export function stopContainer(name: string): string {
 
 /** Ensure the container runtime is running, starting it if needed. */
 export function ensureContainerRuntimeRunning(): void {
+  // Apple container CLI uses `container list` instead of `docker info`
+  const healthCmd =
+    CONTAINER_RUNTIME_BIN === 'container'
+      ? `${CONTAINER_RUNTIME_BIN} list`
+      : `${CONTAINER_RUNTIME_BIN} info`;
   try {
-    execSync(`${CONTAINER_RUNTIME_BIN} info`, {
+    execSync(healthCmd, {
       stdio: 'pipe',
       timeout: 10000,
     });
@@ -85,10 +91,10 @@ export function ensureContainerRuntimeRunning(): void {
       '║  Agents cannot run without a container runtime. To fix:        ║',
     );
     console.error(
-      '║  1. Ensure Docker is installed and running                     ║',
+      `║  1. Ensure ${CONTAINER_RUNTIME_BIN} is installed and running${' '.repeat(Math.max(0, 24 - CONTAINER_RUNTIME_BIN.length))}║`,
     );
     console.error(
-      '║  2. Run: docker info                                           ║',
+      `║  2. Run: ${healthCmd}${' '.repeat(Math.max(0, 38 - healthCmd.length))}║`,
     );
     console.error(
       '║  3. Restart NanoClaw                                           ║',
@@ -103,11 +109,26 @@ export function ensureContainerRuntimeRunning(): void {
 /** Kill orphaned NanoClaw containers from previous runs. */
 export function cleanupOrphans(): void {
   try {
-    const output = execSync(
-      `${CONTAINER_RUNTIME_BIN} ps --filter name=nanoclaw- --format '{{.Names}}'`,
-      { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
-    );
-    const orphans = output.trim().split('\n').filter(Boolean);
+    let orphans: string[];
+    if (CONTAINER_RUNTIME_BIN === 'container') {
+      // Apple container: parse `container list` output for nanoclaw- entries
+      const output = execSync(`${CONTAINER_RUNTIME_BIN} list`, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        encoding: 'utf-8',
+      });
+      orphans = output
+        .trim()
+        .split('\n')
+        .slice(1) // skip header
+        .map((line) => line.split(/\s+/)[0])
+        .filter((name) => name && name.startsWith('nanoclaw-'));
+    } else {
+      const output = execSync(
+        `${CONTAINER_RUNTIME_BIN} ps --filter name=nanoclaw- --format '{{.Names}}'`,
+        { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
+      );
+      orphans = output.trim().split('\n').filter(Boolean);
+    }
     for (const name of orphans) {
       try {
         execSync(stopContainer(name), { stdio: 'pipe' });

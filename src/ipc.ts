@@ -3,15 +3,17 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { executeSSHLocalhost } from './ssh-helper.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
-import { isValidGroupFolder } from './group-folder.js';
+import { isValidGroupFolder, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendDocument: (jid: string, filePath: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -153,6 +155,37 @@ export function startIpcWatcher(deps: IpcDeps): void {
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
+/** Translate a container path back to a host path. */
+function resolveContainerPath(
+  containerPath: string,
+  groupFolder: string,
+  group: RegisteredGroup | undefined,
+): string | null {
+  // /workspace/group/... → GROUPS_DIR/{folder}/...
+  if (containerPath.startsWith('/workspace/group/')) {
+    const rel = containerPath.slice('/workspace/group/'.length);
+    return path.join(GROUPS_DIR, groupFolder, rel);
+  }
+  // /workspace/extra/... → look up in additionalMounts
+  if (
+    containerPath.startsWith('/workspace/extra/') &&
+    group?.containerConfig?.additionalMounts
+  ) {
+    const rel = containerPath.slice('/workspace/extra/'.length);
+    const firstSegment = rel.split('/')[0];
+    const mount = group.containerConfig.additionalMounts.find(
+      (m) => m.containerPath === firstSegment,
+    );
+    if (mount) {
+      const restOfPath = rel.slice(firstSegment.length + 1);
+      return restOfPath
+        ? path.join(mount.hostPath, restOfPath)
+        : mount.hostPath;
+    }
+  }
+  return null;
+}
+
 export async function processTaskIpc(
   data: {
     type: string;
@@ -164,6 +197,12 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
+    // For ssh_localhost
+    command?: string;
+    requestId?: string;
+    // For send_file
+    filePath?: string;
+    caption?: string;
     // For register_group
     jid?: string;
     name?: string;
@@ -448,6 +487,81 @@ export async function processTaskIpc(
         );
       }
       break;
+
+    case 'ssh_localhost':
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized ssh_localhost attempt blocked',
+        );
+        break;
+      }
+      if (data.command && data.requestId) {
+        // Write response file so the container can poll for it synchronously
+        const responseDir = path.join(resolveGroupIpcPath(sourceGroup), 'responses');
+        fs.mkdirSync(responseDir, { recursive: true });
+        const responseFile = path.join(responseDir, `${data.requestId}.json`);
+
+        try {
+          logger.info(
+            { command: data.command, requestId: data.requestId, sourceGroup },
+            'Executing SSH command on localhost',
+          );
+          const sshResult = await executeSSHLocalhost(data.command);
+          fs.writeFileSync(responseFile, JSON.stringify({ output: sshResult }));
+        } catch (error: unknown) {
+          const errMsg =
+            error instanceof Error ? error.message : String(error);
+          logger.error(
+            { command: data.command, error: errMsg },
+            'SSH command failed',
+          );
+          fs.writeFileSync(responseFile, JSON.stringify({ error: errMsg }));
+        }
+      } else {
+        logger.warn(
+          { data },
+          'Invalid ssh_localhost request - missing fields',
+        );
+      }
+      break;
+
+    case 'send_file': {
+      if (!data.filePath || !data.chatJid) {
+        logger.warn({ data }, 'Invalid send_file request - missing fields');
+        break;
+      }
+      const targetGroup = registeredGroups[data.chatJid];
+      const hostPath = resolveContainerPath(
+        data.filePath,
+        sourceGroup,
+        targetGroup,
+      );
+      if (!hostPath) {
+        logger.warn(
+          { filePath: data.filePath, sourceGroup },
+          'Could not resolve host path for send_file',
+        );
+        break;
+      }
+      if (!fs.existsSync(hostPath)) {
+        logger.warn(
+          { hostPath, filePath: data.filePath },
+          'send_file: resolved host path does not exist',
+        );
+        break;
+      }
+      try {
+        logger.info(
+          { filePath: hostPath, chatJid: data.chatJid, sourceGroup },
+          'Sending file via channel',
+        );
+        await deps.sendDocument(data.chatJid, hostPath, data.caption);
+      } catch (err) {
+        logger.error({ err, filePath: hostPath }, 'send_file failed');
+      }
+      break;
+    }
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');

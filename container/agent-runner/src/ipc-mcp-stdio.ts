@@ -298,6 +298,102 @@ server.tool(
 );
 
 server.tool(
+  'ssh_localhost',
+  'Execute a command on the host machine via SSH. Main group only. Use for checking tmux sessions, running builds, managing files, or any host-level operation. The command runs as the host user with full access. Returns the command output synchronously.',
+  {
+    command: z.string().describe('Shell command to execute on localhost (e.g., "tmux list-sessions", "ls ~/work")'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Error: SSH commands can only be executed from the main group.' }],
+        isError: true,
+      };
+    }
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const responsesDir = path.join(IPC_DIR, 'responses');
+    fs.mkdirSync(responsesDir, { recursive: true });
+    const responseFile = path.join(responsesDir, `${requestId}.json`);
+
+    const data = {
+      type: 'ssh_localhost',
+      requestId,
+      command: args.command,
+      chatJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    // Poll for response file (host writes it when SSH completes)
+    const timeout = 30000;
+    const interval = 100;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, interval));
+      if (fs.existsSync(responseFile)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          if (result.error) {
+            return { content: [{ type: 'text' as const, text: `SSH error: ${result.error}` }], isError: true };
+          }
+          return { content: [{ type: 'text' as const, text: result.output }] };
+        } catch {
+          fs.unlinkSync(responseFile);
+          return { content: [{ type: 'text' as const, text: 'Failed to parse SSH response' }], isError: true };
+        }
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'SSH command timed out after 30s' }], isError: true };
+  },
+);
+
+server.tool(
+  'send_file',
+  'Send a file as a Telegram attachment to the user or group. IMPORTANT: The file must be under /workspace/group/ or /workspace/extra/ — files in /tmp/ or other container-local paths cannot be sent. Copy to /workspace/group/ first if needed.',
+  {
+    file_path: z.string().describe('Absolute path under /workspace/group/ or /workspace/extra/ (e.g. /workspace/group/report.md). Files in /tmp/ are NOT accessible to the host.'),
+    caption: z.string().optional().describe('Optional caption to include with the file'),
+  },
+  async (args) => {
+    // Validate the path is resolvable before sending to host
+    if (!args.file_path.startsWith('/workspace/group/') && !args.file_path.startsWith('/workspace/extra/')) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: file_path must start with /workspace/group/ or /workspace/extra/. Got "${args.file_path}". Copy the file to /workspace/group/ first, then retry.` }],
+        isError: true,
+      };
+    }
+
+    if (!fs.existsSync(args.file_path)) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: file not found at "${args.file_path}".` }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'send_file',
+      filePath: args.file_path,
+      caption: args.caption,
+      chatJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Sending file: ${args.file_path}` }],
+    };
+  },
+);
+
+server.tool(
   'register_group',
   `Register a new chat/group so the agent can respond to messages there. Main group only.
 

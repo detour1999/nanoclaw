@@ -76,7 +76,11 @@ function validateFrontmatter(fm: unknown): TaskDocFrontmatter {
     );
   }
   if (f.vars !== undefined) {
-    if (typeof f.vars !== 'object' || f.vars === null || Array.isArray(f.vars)) {
+    if (
+      typeof f.vars !== 'object' ||
+      f.vars === null ||
+      Array.isArray(f.vars)
+    ) {
       throw new Error('Invalid task doc: frontmatter.vars must be a map');
     }
     for (const [k, v] of Object.entries(f.vars as Record<string, unknown>)) {

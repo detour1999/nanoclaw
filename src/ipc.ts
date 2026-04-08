@@ -763,8 +763,7 @@ export async function processTaskIpc(
         } catch {
           const msg = `install_task: invalid cron "${scheduleValue}"`;
           logger.warn({ scheduleValue }, msg);
-          if (data.chatJid)
-            await deps.sendMessage(data.chatJid as string, msg);
+          if (data.chatJid) await deps.sendMessage(data.chatJid as string, msg);
           break;
         }
       } else if (scheduleType === 'interval') {
@@ -772,8 +771,7 @@ export async function processTaskIpc(
         if (isNaN(ms) || ms <= 0) {
           const msg = `install_task: invalid interval "${scheduleValue}"`;
           logger.warn({ scheduleValue }, msg);
-          if (data.chatJid)
-            await deps.sendMessage(data.chatJid as string, msg);
+          if (data.chatJid) await deps.sendMessage(data.chatJid as string, msg);
           break;
         }
         nextRun = new Date(Date.now() + ms).toISOString();
@@ -782,8 +780,7 @@ export async function processTaskIpc(
         if (isNaN(date.getTime())) {
           const msg = `install_task: invalid timestamp "${scheduleValue}"`;
           logger.warn({ scheduleValue }, msg);
-          if (data.chatJid)
-            await deps.sendMessage(data.chatJid as string, msg);
+          if (data.chatJid) await deps.sendMessage(data.chatJid as string, msg);
           break;
         }
         nextRun = date.toISOString();

@@ -52,7 +52,7 @@ describe('parseTaskDoc', () => {
 
   it('extracts the prompt from the ## Prompt fenced block', () => {
     const doc = parseTaskDoc(sampleDoc);
-    expect(doc.prompt).toContain("You are {{agent_name}}");
+    expect(doc.prompt).toContain('You are {{agent_name}}');
     expect(doc.prompt).toContain("{{user_name}}'s work agent");
     expect(doc.prompt).not.toContain('```');
     expect(doc.prompt).not.toContain('## Prompt');

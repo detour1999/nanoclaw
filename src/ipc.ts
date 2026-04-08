@@ -3,12 +3,25 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import {
+  DATA_DIR,
+  DOCS_TASKS_DIR,
+  GROUPS_DIR,
+  IPC_POLL_INTERVAL,
+  REPO_ROOT,
+  TIMEZONE,
+} from './config.js';
 import { executeSSHLocalhost } from './ssh-helper.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
+import {
+  parseTaskDoc,
+  renderTaskDoc,
+  substituteVars,
+  TaskDocFrontmatter,
+} from './task-doc.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -231,6 +244,13 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For document_task
+    description?: string;
+    force?: boolean;
+    // For install_task
+    docPath?: string;
+    targetGroupJid?: string;
+    varsOverride?: Record<string, string>;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -567,6 +587,233 @@ export async function processTaskIpc(
       }
       setTimeout(() => process.exit(0), 2000);
       break;
+
+    case 'document_task': {
+      // Render an existing scheduled task to docs/tasks/<slug>.md
+      if (!data.taskId) {
+        logger.warn({ data }, 'document_task: missing taskId');
+        break;
+      }
+      const task = getTaskById(data.taskId as string);
+      if (!task) {
+        logger.warn({ taskId: data.taskId }, 'document_task: task not found');
+        if (data.chatJid) {
+          await deps.sendMessage(
+            data.chatJid as string,
+            `document_task: task ${data.taskId} not found`,
+          );
+        }
+        break;
+      }
+      // Authorization: non-main groups can only document their own tasks
+      if (!isMain && task.group_folder !== sourceGroup) {
+        logger.warn(
+          { sourceGroup, taskGroup: task.group_folder },
+          'Unauthorized document_task attempt blocked',
+        );
+        break;
+      }
+      const rawSlug =
+        (data.name as string | undefined) || `task-${task.id.slice(0, 12)}`;
+      const slug = rawSlug
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80);
+      if (!slug) {
+        logger.warn({ rawSlug }, 'document_task: invalid slug');
+        break;
+      }
+      const targetPath = path.join(DOCS_TASKS_DIR, `${slug}.md`);
+      const force = data.force === true;
+      if (fs.existsSync(targetPath) && !force) {
+        const msg = `document_task: ${path.relative(REPO_ROOT, targetPath)} already exists. Pass force:true to overwrite.`;
+        logger.warn({ targetPath }, msg);
+        if (data.chatJid) {
+          await deps.sendMessage(data.chatJid as string, msg);
+        }
+        break;
+      }
+      const fm: TaskDocFrontmatter = {
+        name: slug,
+        schedule_type: task.schedule_type,
+        schedule_value: task.schedule_value,
+        context_mode: task.context_mode,
+      };
+      const description =
+        (data.description as string | undefined) ||
+        `Documented from task ${task.id}.`;
+      const body = `# ${slug}\n\n${description}`;
+      const rendered = renderTaskDoc(fm, body, task.prompt);
+      try {
+        fs.mkdirSync(DOCS_TASKS_DIR, { recursive: true });
+        fs.writeFileSync(targetPath, rendered);
+        const rel = path.relative(REPO_ROOT, targetPath);
+        logger.info({ taskId: task.id, targetPath }, 'Task documented');
+        if (data.chatJid) {
+          await deps.sendMessage(
+            data.chatJid as string,
+            `Task documented to \`${rel}\``,
+          );
+        }
+      } catch (err) {
+        logger.error({ err, targetPath }, 'document_task: write failed');
+        if (data.chatJid) {
+          await deps.sendMessage(
+            data.chatJid as string,
+            `document_task: failed to write file — ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      break;
+    }
+
+    case 'install_task': {
+      if (!data.docPath) {
+        logger.warn({ data }, 'install_task: missing docPath');
+        break;
+      }
+      const docPath = path.isAbsolute(data.docPath as string)
+        ? (data.docPath as string)
+        : path.resolve(REPO_ROOT, data.docPath as string);
+      // Confine reads to docs/tasks/ to prevent arbitrary file reads
+      const relToDocs = path.relative(DOCS_TASKS_DIR, docPath);
+      if (relToDocs.startsWith('..') || path.isAbsolute(relToDocs)) {
+        logger.warn(
+          { docPath, sourceGroup },
+          'install_task: path outside docs/tasks/',
+        );
+        if (data.chatJid) {
+          await deps.sendMessage(
+            data.chatJid as string,
+            `install_task: path must be inside docs/tasks/`,
+          );
+        }
+        break;
+      }
+      let parsed;
+      try {
+        const content = fs.readFileSync(docPath, 'utf-8');
+        parsed = parseTaskDoc(content);
+      } catch (err) {
+        const msg = `install_task: parse error — ${err instanceof Error ? err.message : String(err)}`;
+        logger.warn({ docPath, err }, msg);
+        if (data.chatJid) {
+          await deps.sendMessage(data.chatJid as string, msg);
+        }
+        break;
+      }
+
+      // Determine target group: main may target any group, others self only
+      const targetJid =
+        isMain && data.targetGroupJid
+          ? (data.targetGroupJid as string)
+          : data.chatJid
+            ? (data.chatJid as string)
+            : null;
+      if (!targetJid) {
+        logger.warn({ sourceGroup }, 'install_task: no target JID resolvable');
+        break;
+      }
+      const targetGroupEntry = registeredGroups[targetJid];
+      if (!targetGroupEntry) {
+        logger.warn({ targetJid }, 'install_task: target group not registered');
+        break;
+      }
+      const targetFolder = targetGroupEntry.folder;
+      if (!isMain && targetFolder !== sourceGroup) {
+        logger.warn(
+          { sourceGroup, targetFolder },
+          'Unauthorized install_task attempt blocked',
+        );
+        break;
+      }
+      // Enforce requires_host_access against the target group
+      if (parsed.frontmatter.requires_host_access) {
+        const targetHostAccess =
+          targetGroupEntry.isMain === true ||
+          targetGroupEntry.containerConfig?.hostAccess === true;
+        if (!targetHostAccess) {
+          const msg = `install_task: doc requires host access but target group "${targetFolder}" does not have hostAccess`;
+          logger.warn({ targetFolder }, msg);
+          if (data.chatJid) {
+            await deps.sendMessage(data.chatJid as string, msg);
+          }
+          break;
+        }
+      }
+
+      // Resolve vars: defaults from frontmatter overlaid with caller overrides
+      const vars: Record<string, string> = {
+        ...(parsed.frontmatter.vars || {}),
+        ...((data.varsOverride as Record<string, string> | undefined) || {}),
+      };
+      const resolvedPrompt = substituteVars(parsed.prompt, vars);
+
+      // Validate schedule_value
+      let nextRun: string | null = null;
+      const scheduleType = parsed.frontmatter.schedule_type;
+      const scheduleValue = parsed.frontmatter.schedule_value;
+      if (scheduleType === 'cron') {
+        try {
+          const interval = CronExpressionParser.parse(scheduleValue, {
+            tz: TIMEZONE,
+          });
+          nextRun = interval.next().toISOString();
+        } catch {
+          const msg = `install_task: invalid cron "${scheduleValue}"`;
+          logger.warn({ scheduleValue }, msg);
+          if (data.chatJid)
+            await deps.sendMessage(data.chatJid as string, msg);
+          break;
+        }
+      } else if (scheduleType === 'interval') {
+        const ms = parseInt(scheduleValue, 10);
+        if (isNaN(ms) || ms <= 0) {
+          const msg = `install_task: invalid interval "${scheduleValue}"`;
+          logger.warn({ scheduleValue }, msg);
+          if (data.chatJid)
+            await deps.sendMessage(data.chatJid as string, msg);
+          break;
+        }
+        nextRun = new Date(Date.now() + ms).toISOString();
+      } else if (scheduleType === 'once') {
+        const date = new Date(scheduleValue);
+        if (isNaN(date.getTime())) {
+          const msg = `install_task: invalid timestamp "${scheduleValue}"`;
+          logger.warn({ scheduleValue }, msg);
+          if (data.chatJid)
+            await deps.sendMessage(data.chatJid as string, msg);
+          break;
+        }
+        nextRun = date.toISOString();
+      }
+
+      const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      createTask({
+        id: taskId,
+        group_folder: targetFolder,
+        chat_jid: targetJid,
+        prompt: resolvedPrompt,
+        schedule_type: scheduleType,
+        schedule_value: scheduleValue,
+        context_mode: parsed.frontmatter.context_mode || 'isolated',
+        next_run: nextRun,
+        status: 'active',
+        created_at: new Date().toISOString(),
+      });
+      logger.info(
+        { taskId, sourceGroup, targetFolder, docPath },
+        'Task installed from doc',
+      );
+      if (data.chatJid) {
+        await deps.sendMessage(
+          data.chatJid as string,
+          `Installed task ${taskId} from \`${path.relative(REPO_ROOT, docPath)}\` (next run: ${nextRun || 'N/A'})`,
+        );
+      }
+      break;
+    }
 
     case 'send_file': {
       if (!data.filePath || !data.chatJid) {

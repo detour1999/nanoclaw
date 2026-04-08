@@ -378,6 +378,69 @@ server.tool(
 );
 
 server.tool(
+  'document_task',
+  `Save an existing scheduled task as a reusable doc in docs/tasks/<slug>.md.
+
+Use this when a task you've created (or that already exists) is worth sharing or reinstalling later. The host will write a markdown file with frontmatter (schedule, context_mode, etc.) and the prompt embedded in a fenced code block.
+
+Provide a short slug (\`name\`) and a 1-3 sentence description of what the task does and why it exists. The doc can be installed elsewhere via install_task.
+
+Defaults to refusing if the file already exists; pass force:true to overwrite.`,
+  {
+    task_id: z.string().describe('The ID of the scheduled task to document'),
+    name: z.string().describe('Slug for the doc filename, e.g. "session-health-monitor"'),
+    description: z.string().describe('1-3 sentences explaining what the task does and why it exists'),
+    force: z.boolean().optional().describe('Overwrite an existing doc if one already has this name'),
+  },
+  async (args) => {
+    const data = {
+      type: 'document_task',
+      taskId: args.task_id,
+      name: args.name,
+      description: args.description,
+      force: args.force,
+      groupFolder,
+      chatJid,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(TASKS_DIR, data);
+    return {
+      content: [{ type: 'text' as const, text: `Documenting task ${args.task_id} as ${args.name}.md...` }],
+    };
+  },
+);
+
+server.tool(
+  'install_task',
+  `Install a task from a doc file under docs/tasks/. The host parses the frontmatter (schedule, context_mode, requires_host_access) and the prompt block, substitutes any {{vars}} from the doc's defaults overlaid with vars_override, and creates a scheduled task.
+
+Main group can install for any registered group via target_group_jid; other groups install only for themselves.
+
+If the doc declares requires_host_access:true, the target group must have hostAccess enabled or the install is refused.`,
+  {
+    doc_path: z.string().describe('Path to the task doc, e.g. "docs/tasks/session-health-monitor.md" (relative to repo root)'),
+    target_group_jid: z.string().optional().describe('(Main only) JID of the group to install the task for. Defaults to the current group.'),
+    vars_override: z.record(z.string(), z.string()).optional().describe('Override placeholder values from the doc. Keys must match {{var}} placeholders in the prompt.'),
+  },
+  async (args) => {
+    const data = {
+      type: 'install_task',
+      docPath: args.doc_path,
+      targetGroupJid: args.target_group_jid,
+      varsOverride: args.vars_override,
+      groupFolder,
+      chatJid,
+      isMain,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(TASKS_DIR, data);
+    return {
+      content: [{ type: 'text' as const, text: `Installing task from ${args.doc_path}...` }],
+    };
+  },
+);
+
+server.tool(
   'send_file',
   'Send a file as a Telegram attachment to the user or group. IMPORTANT: The file must be under /workspace/group/ or /workspace/extra/ — files in /tmp/ or other container-local paths cannot be sent. Copy to /workspace/group/ first if needed.',
   {

@@ -19,6 +19,7 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+const hasHostAccess = process.env.NANOCLAW_HOST_ACCESS === '1';
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -299,14 +300,14 @@ server.tool(
 
 server.tool(
   'ssh_localhost',
-  'Execute a command on the host machine via SSH. Main group only. Use for checking tmux sessions, running builds, managing files, or any host-level operation. The command runs as the host user with full access. Returns the command output synchronously.',
+  'Execute a command on the host machine via SSH. Requires host access privilege. Use for checking tmux sessions, running builds, managing files, or any host-level operation. The command runs as the host user with full access. Returns the command output synchronously.',
   {
     command: z.string().describe('Shell command to execute on localhost (e.g., "tmux list-sessions", "ls ~/work")'),
   },
   async (args) => {
-    if (!isMain) {
+    if (!hasHostAccess) {
       return {
-        content: [{ type: 'text' as const, text: 'Error: SSH commands can only be executed from the main group.' }],
+        content: [{ type: 'text' as const, text: 'Error: SSH commands require host access privilege.' }],
         isError: true,
       };
     }
@@ -350,6 +351,29 @@ server.tool(
     }
 
     return { content: [{ type: 'text' as const, text: 'SSH command timed out after 30s' }], isError: true };
+  },
+);
+
+server.tool(
+  'restart_nanoclaw',
+  'Safely restart the NanoClaw orchestrator service. Requires host access privilege. Use this instead of ssh_localhost with launchctl commands. The service will restart cleanly via launchd after a 2-second delay.',
+  {},
+  async () => {
+    if (!hasHostAccess) {
+      return {
+        content: [{ type: 'text' as const, text: 'Error: restart requires host access privilege.' }],
+        isError: true,
+      };
+    }
+
+    writeIpcFile(TASKS_DIR, {
+      type: 'restart_nanoclaw',
+      chatJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    return { content: [{ type: 'text' as const, text: 'Restart requested. NanoClaw will restart in ~2 seconds.' }] };
   },
 );
 

@@ -58,14 +58,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
     const registeredGroups = deps.registeredGroups();
 
-    // Build folder→isMain lookup from registered groups
+    // Build folder→privilege lookups from registered groups
     const folderIsMain = new Map<string, boolean>();
+    const folderHasHostAccess = new Map<string, boolean>();
     for (const group of Object.values(registeredGroups)) {
       if (group.isMain) folderIsMain.set(group.folder, true);
+      if (group.isMain || group.containerConfig?.hostAccess) {
+        folderHasHostAccess.set(group.folder, true);
+      }
     }
 
     for (const sourceGroup of groupFolders) {
       const isMain = folderIsMain.get(sourceGroup) === true;
+      const hasHostAccess = folderHasHostAccess.get(sourceGroup) === true;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
       const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
 
@@ -130,20 +135,32 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(tasksDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              // Pass source group identity to processTaskIpc for authorization
-              await processTaskIpc(data, sourceGroup, isMain, deps);
+              // Delete before processing to prevent restart loops: if a task
+              // kills the process (e.g. ssh_localhost running launchctl),
+              // the file must already be gone so it isn't re-executed on boot.
               fs.unlinkSync(filePath);
+              // Pass source group identity to processTaskIpc for authorization
+              await processTaskIpc(
+                data,
+                sourceGroup,
+                isMain,
+                hasHostAccess,
+                deps,
+              );
             } catch (err) {
               logger.error(
                 { file, sourceGroup, err },
                 'Error processing IPC task',
               );
-              const errorDir = path.join(ipcBaseDir, 'errors');
-              fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `${sourceGroup}-${file}`),
-              );
+              // Only move to errors if the file still exists (wasn't already deleted)
+              if (fs.existsSync(filePath)) {
+                const errorDir = path.join(ipcBaseDir, 'errors');
+                fs.mkdirSync(errorDir, { recursive: true });
+                fs.renameSync(
+                  filePath,
+                  path.join(errorDir, `${sourceGroup}-${file}`),
+                );
+              }
             }
           }
         }
@@ -217,6 +234,7 @@ export async function processTaskIpc(
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
+  hasHostAccess: boolean, // isMain or containerConfig.hostAccess
   deps: IpcDeps,
 ): Promise<void> {
   const registeredGroups = deps.registeredGroups();
@@ -493,7 +511,7 @@ export async function processTaskIpc(
       break;
 
     case 'ssh_localhost':
-      if (!isMain) {
+      if (!hasHostAccess) {
         logger.warn(
           { sourceGroup },
           'Unauthorized ssh_localhost attempt blocked',
@@ -527,6 +545,27 @@ export async function processTaskIpc(
       } else {
         logger.warn({ data }, 'Invalid ssh_localhost request - missing fields');
       }
+      break;
+
+    case 'restart_nanoclaw':
+      // Safe restart: uses process.exit so launchd restarts us cleanly.
+      // No SSH, no SIGTERM race conditions.
+      if (!hasHostAccess) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized restart_nanoclaw attempt blocked',
+        );
+        break;
+      }
+      logger.info({ sourceGroup }, 'Restart requested via IPC, exiting in 2s');
+      if (data.chatJid) {
+        try {
+          await deps.sendMessage(data.chatJid, 'Restarting NanoClaw...');
+        } catch {
+          // Best effort notification
+        }
+      }
+      setTimeout(() => process.exit(0), 2000);
       break;
 
     case 'send_file': {

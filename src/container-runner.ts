@@ -27,6 +27,7 @@ import {
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { readEnvFile } from './env.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -39,6 +40,7 @@ export interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
+  hostAccess?: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
 }
@@ -215,6 +217,7 @@ function buildVolumeMounts(
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  extraEnv?: Record<string, string>,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -259,6 +262,13 @@ function buildContainerArgs(
     }
   }
 
+  // Forward specific host env vars by name (values come from process.env, never stored in config)
+  if (extraEnv) {
+    for (const [key, value] of Object.entries(extraEnv)) {
+      args.push('-e', `${key}=${value}`);
+    }
+  }
+
   args.push(CONTAINER_IMAGE);
 
   return args;
@@ -278,7 +288,30 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+
+  // Resolve passHostEnv: forward named host env vars into the container (values never stored in config)
+  const extraEnv: Record<string, string> = {};
+  const passKeys = group.containerConfig?.passHostEnv ?? [];
+  if (passKeys.length > 0) {
+    const envFileValues = readEnvFile(passKeys);
+    for (const key of passKeys) {
+      const val = process.env[key] ?? envFileValues[key];
+      if (val !== undefined) {
+        extraEnv[key] = val;
+      } else {
+        logger.warn(
+          { key, group: group.folder },
+          'passHostEnv: var not set on host or .env, skipping',
+        );
+      }
+    }
+  }
+
+  const containerArgs = buildContainerArgs(
+    mounts,
+    containerName,
+    Object.keys(extraEnv).length ? extraEnv : undefined,
+  );
 
   logger.debug(
     {

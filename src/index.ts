@@ -23,6 +23,7 @@ import {
 } from './container-runner.js';
 import {
   cleanupOrphans,
+  detectContainerHostGateway,
   ensureContainerRuntimeRunning,
   PROXY_BIND_HOST,
 } from './container-runtime.js';
@@ -344,6 +345,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        hostAccess: group.containerConfig?.hostAccess,
         assistantName: ASSISTANT_NAME,
       },
       (proc, containerName) =>
@@ -492,6 +494,7 @@ function recoverPendingMessages(): void {
 
 function ensureContainerSystemRunning(): void {
   ensureContainerRuntimeRunning();
+  detectContainerHostGateway();
   cleanupOrphans();
 }
 

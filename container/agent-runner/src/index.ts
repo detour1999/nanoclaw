@@ -25,6 +25,7 @@ interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
+  hostAccess?: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
 }
@@ -421,6 +422,7 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            NANOCLAW_HOST_ACCESS: (containerInput.isMain || containerInput.hostAccess) ? '1' : '0',
           },
         },
       },

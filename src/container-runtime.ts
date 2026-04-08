@@ -12,8 +12,42 @@ import { logger } from './logger.js';
 export const CONTAINER_RUNTIME_BIN = process.env.CONTAINER_RUNTIME || 'docker';
 
 /** Hostname containers use to reach the host machine. */
-export const CONTAINER_HOST_GATEWAY =
+export let CONTAINER_HOST_GATEWAY =
   process.env.CONTAINER_HOST_GATEWAY || 'host.docker.internal';
+
+/**
+ * For Apple Container on macOS, detect the gateway IP dynamically.
+ * The subnet can change when the container service restarts, so we probe
+ * a throwaway container's /etc/resolv.conf to find the current gateway.
+ * Must be called after ensureContainerRuntimeRunning().
+ */
+export function detectContainerHostGateway(): void {
+  if (process.env.CONTAINER_HOST_GATEWAY) return; // explicit override, don't touch
+  if (CONTAINER_RUNTIME_BIN !== 'container') return; // only needed for Apple Container
+
+  try {
+    const output = execSync(
+      `${CONTAINER_RUNTIME_BIN} run --rm node:22-slim cat /etc/resolv.conf`,
+      { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8', timeout: 15000 },
+    );
+    const match = output.match(/nameserver\s+([\d.]+)/);
+    if (match) {
+      const detected = match[1];
+      if (detected !== CONTAINER_HOST_GATEWAY) {
+        logger.info(
+          { old: CONTAINER_HOST_GATEWAY, detected },
+          'Auto-detected Apple Container gateway IP',
+        );
+      }
+      CONTAINER_HOST_GATEWAY = detected;
+    }
+  } catch (err) {
+    logger.warn(
+      { err },
+      'Failed to auto-detect container gateway IP, using default',
+    );
+  }
+}
 
 /**
  * Address the credential proxy binds to.

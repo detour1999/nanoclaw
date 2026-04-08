@@ -68,6 +68,27 @@ When you learn something important:
 
 ---
 
+## SSH / tmux Rules
+
+The `mcp__nanoclaw__ssh_localhost` tool connects to a **fish shell**. Fish rejects bash syntax — these patterns will fail:
+- `$'...'` (ANSI-C quoting)
+- Heredocs (`<<EOF`)
+- `for x in ...; do ... done`
+- `[[ ]]` conditionals
+
+**Always wrap complex commands:** `bash -c 'your command here'`
+
+When sending to tmux panes:
+- Use **single quotes** around the message: `tmux send-keys -t pane 'message' Enter`
+- Double-quoted strings with special chars (em dashes, backticks, etc.) cause "not in a mode" errors
+- **For messages with special characters or long text**, write to a tempfile and paste via `tmux load-buffer`:
+  ```bash
+  bash -c "printf '%s' 'your message here' > /tmp/tmux_msg.txt && tmux load-buffer /tmp/tmux_msg.txt && tmux paste-buffer -t pane && tmux send-keys -t pane '' Enter"
+  ```
+- **Always follow with a `capture-pane` check** to confirm the message was received and submitted
+
+---
+
 ## Admin Context
 
 This is the *main channel*, which has elevated privileges.

@@ -1,6 +1,8 @@
+import { execFile } from 'child_process';
 import fs from 'fs';
 import https from 'https';
 import path from 'path';
+import { promisify } from 'util';
 import { Api, Bot, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
@@ -41,6 +43,49 @@ async function sendTelegramMessage(
     // Fallback: send as plain text if Markdown parsing fails
     logger.debug({ err }, 'Markdown send failed, falling back to plain text');
     await api.sendMessage(chatId, text, options);
+  }
+}
+
+
+const execFileAsync = promisify(execFile);
+
+const WHISPER_MODEL = '/opt/homebrew/share/whisper-cpp/ggml-base.en.bin';
+const WHISPER_CLI = '/opt/homebrew/bin/whisper-cli';
+const FFMPEG_BIN = '/opt/homebrew/bin/ffmpeg';
+
+/**
+ * Transcribe a voice note (.oga) to text using local whisper-cpp.
+ * Converts to 16kHz mono WAV first (whisper preferred format), then transcribes.
+ * Returns null if transcription fails or the model is not installed.
+ */
+async function transcribeVoice(ogaPath: string): Promise<string | null> {
+  if (!fs.existsSync(WHISPER_MODEL)) return null;
+
+  const wavPath = ogaPath.slice(0, ogaPath.lastIndexOf('.')) + '.wav';
+  try {
+    await execFileAsync(FFMPEG_BIN, [
+      '-y', '-i', ogaPath,
+      '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le',
+      wavPath,
+    ]);
+
+    const { stdout } = await execFileAsync(
+      WHISPER_CLI,
+      ['-m', WHISPER_MODEL, '-f', wavPath, '-nt', '-l', 'en'],
+      { timeout: 30000 },
+    );
+
+    const text = stdout
+      .split("\n")
+      .map((l: string) => l.trim())
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    return text || null;
+  } catch {
+    return null;
+  } finally {
+    try { fs.unlinkSync(wavPath); } catch { /* ok */ }
   }
 }
 
@@ -277,6 +322,16 @@ export class TelegramChannel implements Channel {
             const yearMonth = path.basename(mediaDir);
             const containerPath = `/workspace/group/media/${yearMonth}/${destName}`;
             content = `${placeholder} ${containerPath}${caption}`;
+
+            // Transcribe voice messages to text using local whisper-cpp
+            if (filename === 'voice.oga') {
+              const transcript = await transcribeVoice(destPath);
+              if (transcript) {
+                content = `[Voice message: "${transcript}"]${caption}`;
+                logger.info({ chatJid }, 'Voice message transcribed');
+              }
+            }
+
             logger.info(
               { chatJid, file: destName },
               'Telegram media downloaded',

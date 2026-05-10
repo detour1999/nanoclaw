@@ -46,7 +46,6 @@ async function sendTelegramMessage(
   }
 }
 
-
 const execFileAsync = promisify(execFile);
 
 const WHISPER_MODEL = '/opt/homebrew/share/whisper-cpp/ggml-base.en.bin';
@@ -64,8 +63,15 @@ async function transcribeVoice(ogaPath: string): Promise<string | null> {
   const wavPath = ogaPath.slice(0, ogaPath.lastIndexOf('.')) + '.wav';
   try {
     await execFileAsync(FFMPEG_BIN, [
-      '-y', '-i', ogaPath,
-      '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le',
+      '-y',
+      '-i',
+      ogaPath,
+      '-ar',
+      '16000',
+      '-ac',
+      '1',
+      '-c:a',
+      'pcm_s16le',
       wavPath,
     ]);
 
@@ -76,7 +82,7 @@ async function transcribeVoice(ogaPath: string): Promise<string | null> {
     );
 
     const text = stdout
-      .split("\n")
+      .split('\n')
       .map((l: string) => l.trim())
       .filter(Boolean)
       .join(' ')
@@ -85,7 +91,11 @@ async function transcribeVoice(ogaPath: string): Promise<string | null> {
   } catch {
     return null;
   } finally {
-    try { fs.unlinkSync(wavPath); } catch { /* ok */ }
+    try {
+      fs.unlinkSync(wavPath);
+    } catch {
+      /* ok */
+    }
   }
 }
 

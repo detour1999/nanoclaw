@@ -211,6 +211,21 @@ export class TelegramChannel implements Channel {
 
       const chatJid = `tg:${ctx.chat.id}`;
       let content = ctx.message.text;
+
+      // Inject quoted message context when this is a reply
+      const replyMsg = ctx.message.reply_to_message as any;
+      if (replyMsg) {
+        const replyText: string = replyMsg.text || replyMsg.caption || '';
+        const replyFrom: string =
+          replyMsg.from?.first_name || replyMsg.from?.username || 'Unknown';
+        if (replyText) {
+          const preview =
+            replyText.length > 200 ? replyText.slice(0, 200) + '…' : replyText;
+          content = `[Replying to ${replyFrom}: "${preview}"]
+${content}`;
+        }
+      }
+
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
         ctx.from?.first_name ||

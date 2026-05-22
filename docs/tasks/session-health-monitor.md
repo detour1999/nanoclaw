@@ -7,7 +7,7 @@ context_mode: isolated
 
 # session-health-monitor
 
-Monitors Claude Code tmux panes every 10 minutes for 401 errors (Anthropic outages) and rate limit hits. Notifies Dylan via send_message only when something is wrong — silent when healthy. Schedules auto-restart for rate-limited sessions at reset time + 1 min.
+Monitors Claude Code tmux panes every 10 minutes. Checks for 401 errors and rate limits via the tmux collector, AND separately queries state.db for all claude_running panes to detect agents waiting for user input (collector misses these since they have no JSONL changes). Notifies Dylan via send_message only when something needs attention.
 
 ## Prompt
 
@@ -22,24 +22,50 @@ You are Reed, Dylan's work agent. This is your session health monitor run.
 
 ## Steps
 
-### 1. Check panes
-Run the collector and capture active Claude panes. Look for:
-- **401 errors**: "401", "Authentication error", "Unauthorized"
-- **Rate limits**: "You've hit your limit · resets"
-
+### 1. Run collector (catches changes)
 ```
 python3 ~/work/tools/fred-tools/tmux_collector.py
 ```
 
-For each window with "claude" in the name:
-```
-tmux capture-pane -t SESSION:WINDOW -p | tail -10
+For each changed pane with "claude" in the name, check for:
+- **401 errors**: "401", "Authentication error", "Unauthorized"
+- **Rate limits**: "You've hit your limit · resets"
+
+### 2. Check all claude_running panes for waiting-for-input (secondary check)
+
+The collector only surfaces *changes*. Agents waiting for Dylan's input stay stuck in claude_running with no JSONL activity — the collector misses them entirely.
+
+Query state.db for all panes currently in claude_running status:
+```bash
+sqlite3 ~/work/tools/fred-tools/state.db 'SELECT session, window, pane, path FROM pane_state WHERE status = "claude_running";'
 ```
 
-### 2. Load state
+For each pane, capture its output:
+```bash
+tmux capture-pane -t SESSION:WINDOW -p | tail -12
+```
+
+**Waiting-for-input pattern:** The pane shows `❯` followed by a blank line immediately before the `──────` status bar separator. This means Claude is idle at the prompt, waiting for user input.
+
+**Actively-working pattern:** Lines before the status bar contain spinner text like `· Thinking…`, `✳ Schlepping…`, `✻ Worked for…` etc. These are NOT waiting.
+
+Also check for 401/rate-limit patterns while you have each pane captured.
+
+### 3. Load state
 Read `/workspace/group/session-health-state.json`. If missing, use `{}`.
 
-### 3. Act on findings
+State schema:
+```json
+{
+  "outage_notified": false,
+  "rate_limited": {},
+  "waiting_notified": {}
+}
+```
+
+`waiting_notified` is keyed by `"session:window"` with value being the ISO timestamp when first notified.
+
+### 4. Act on findings
 
 **401s on 2+ panes (platform outage):**
 - If `outage_notified` false: call `mcp__nanoclaw__send_message` once listing affected sessions
@@ -54,7 +80,22 @@ Read `/workspace/group/session-health-state.json`. If missing, use `{}`.
 
 **Rate-limited pane recovered:** Remove from state
 
-### 4. Save state
+**Agents waiting for input:**
+- Build a list of panes that are waiting-for-input AND not yet in `waiting_notified`
+- If list is non-empty: send ONE combined message via `mcp__nanoclaw__send_message`:
+
+  ```
+  *Agents waiting for input:*
+  • session:window — project/branch — [last line before ❯]
+  • ...
+  ```
+
+- Add all newly-notified panes to `waiting_notified` with current timestamp
+- If a pane was in `waiting_notified` but is now actively working (spinner text visible): remove it from `waiting_notified` so it can be re-notified next time it waits
+
+**Important:** Batch all waiting-agent notifications into the single allowed `send_message` call. Combine with any other alerts if needed.
+
+### 5. Save state
 Write updated state to `/workspace/group/session-health-state.json`.
 
 That's it. No other output. Silence is correct when everything is healthy.

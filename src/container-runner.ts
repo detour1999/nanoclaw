@@ -718,12 +718,13 @@ export function writeGroupsSnapshot(
   isMain: boolean,
   groups: AvailableGroup[],
   registeredJids: Set<string>,
+  allowedTargetJids: string[] = [],
 ): void {
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
-  // Main sees all groups; others see nothing (they can't activate groups)
-  const visibleGroups = isMain ? groups : [];
+  // Main sees all groups; non-main sees only explicitly allowed target groups
+  const visibleGroups = isMain ? groups : groups.filter(g => allowedTargetJids.includes(g.jid));
 
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
   fs.writeFileSync(

@@ -91,7 +91,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
     schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
     context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
-    target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
+    target_group_jid: z.string().optional().describe('JID of the group to schedule the task for. Defaults to the current group.'),
   },
   async (args) => {
     // Validate schedule_value before writing IPC
@@ -128,8 +128,8 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       }
     }
 
-    // Non-main groups can only schedule for themselves
-    const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+    // Use target_group_jid if provided (IPC layer enforces auth for non-main groups)
+    const targetJid = args.target_group_jid ?? chatJid;
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 

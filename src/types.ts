@@ -32,6 +32,7 @@ export interface ContainerConfig {
   timeout?: number; // Default: 300000 (5 minutes)
   passHostEnv?: string[]; // Host env var names to forward into the container (values never stored)
   hostAccess?: boolean; // Grants ssh_localhost and restart_nanoclaw tools (default: false, always true for isMain)
+  allowedTargetGroups?: string[]; // JIDs of groups this non-main container can schedule tasks for
 }
 
 export interface RegisteredGroup {

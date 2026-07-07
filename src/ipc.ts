@@ -40,6 +40,7 @@ export interface IpcDeps {
     isMain: boolean,
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
+    allowedTargetJids?: string[],
   ) => void;
 }
 
@@ -281,10 +282,12 @@ export async function processTaskIpc(
 
         const targetFolder = targetGroupEntry.folder;
 
-        // Authorization: non-main groups can only schedule for themselves
-        if (!isMain && targetFolder !== sourceGroup) {
+        // Authorization: non-main groups can schedule for themselves or explicitly allowed targets
+        const sourceGroupEntry = Object.values(registeredGroups).find(g => g.folder === sourceGroup);
+        const allowedTargetJids: string[] = (sourceGroupEntry?.containerConfig?.allowedTargetGroups ?? []) as string[];
+        if (!isMain && targetFolder !== sourceGroup && !allowedTargetJids.includes(targetJid)) {
           logger.warn(
-            { sourceGroup, targetFolder },
+            { sourceGroup, targetFolder, allowedTargetJids },
             'Unauthorized schedule_task attempt blocked',
           );
           break;

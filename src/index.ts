@@ -323,6 +323,7 @@ async function runAgent(
     isMain,
     availableGroups,
     new Set(Object.keys(registeredGroups)),
+    (group.containerConfig?.allowedTargetGroups ?? []) as string[],
   );
 
   // Wrap onOutput to track session ID from streamed results

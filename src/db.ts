@@ -527,8 +527,12 @@ export function setRouterState(key: string, value: string): void {
 
 export function getSession(groupFolder: string): string | undefined {
   const row = db
-    .prepare('SELECT session_id, session_date FROM sessions WHERE group_folder = ?')
-    .get(groupFolder) as { session_id: string; session_date: string } | undefined;
+    .prepare(
+      'SELECT session_id, session_date FROM sessions WHERE group_folder = ?',
+    )
+    .get(groupFolder) as
+    | { session_id: string; session_date: string }
+    | undefined;
   if (!row) return undefined;
   // Time-decay rotation: sessions reset daily
   const today = new Date().toISOString().slice(0, 10);

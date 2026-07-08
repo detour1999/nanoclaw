@@ -71,8 +71,11 @@ function createSchema(database: Database.Database): void {
     );
     CREATE TABLE IF NOT EXISTS sessions (
       group_folder TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL
+      session_id TEXT NOT NULL,
+      session_date TEXT NOT NULL DEFAULT ''
     );
+    -- Add session_date column for existing DBs (safe to run repeatedly)
+    CREATE TABLE IF NOT EXISTS _session_migration_done (id INTEGER PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -114,6 +117,15 @@ function createSchema(database: Database.Database): void {
     // Backfill: existing rows with folder = 'main' are the main group
     database.exec(
       `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Add session_date column if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE sessions ADD COLUMN session_date TEXT NOT NULL DEFAULT ''`,
     );
   } catch {
     /* column already exists */
@@ -515,15 +527,20 @@ export function setRouterState(key: string, value: string): void {
 
 export function getSession(groupFolder: string): string | undefined {
   const row = db
-    .prepare('SELECT session_id FROM sessions WHERE group_folder = ?')
-    .get(groupFolder) as { session_id: string } | undefined;
-  return row?.session_id;
+    .prepare('SELECT session_id, session_date FROM sessions WHERE group_folder = ?')
+    .get(groupFolder) as { session_id: string; session_date: string } | undefined;
+  if (!row) return undefined;
+  // Time-decay rotation: sessions reset daily
+  const today = new Date().toISOString().slice(0, 10);
+  if (row.session_date !== today) return undefined;
+  return row.session_id;
 }
 
 export function setSession(groupFolder: string, sessionId: string): void {
+  const today = new Date().toISOString().slice(0, 10);
   db.prepare(
-    'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
-  ).run(groupFolder, sessionId);
+    'INSERT OR REPLACE INTO sessions (group_folder, session_id, session_date) VALUES (?, ?, ?)',
+  ).run(groupFolder, sessionId, today);
 }
 
 export function getAllSessions(): Record<string, string> {

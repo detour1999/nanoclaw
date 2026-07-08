@@ -501,6 +501,27 @@ async function main(): Promise<void> {
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
+
+
+  // Time-decay context injection: on fresh sessions, prepend prior context summaries.
+  // Files written by daily summarization cron at /workspace/group/context/
+  if (!sessionId && !containerInput.isScheduledTask) {
+    const contextParts: string[] = [];
+    const weekPath = '/workspace/group/context/week.md';
+    const todayPath = '/workspace/group/context/today.md';
+    try {
+      if (fs.existsSync(weekPath)) {
+        contextParts.push('## Last week\n' + fs.readFileSync(weekPath, 'utf-8').trim());
+      }
+      if (fs.existsSync(todayPath)) {
+        contextParts.push('## Earlier today\n' + fs.readFileSync(todayPath, 'utf-8').trim());
+      }
+    } catch { /* context files missing or unreadable, skip */ }
+    if (contextParts.length > 0) {
+      prompt = '[Prior conversation context]\n\n' + contextParts.join('\n\n') + '\n\n---\n\n' + prompt;
+    }
+  }
+
   const pending = drainIpcInput();
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);

@@ -245,6 +245,9 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For get_book
+    title?: string;
+    author?: string;
     // For document_task
     description?: string;
     force?: boolean;
@@ -283,9 +286,16 @@ export async function processTaskIpc(
         const targetFolder = targetGroupEntry.folder;
 
         // Authorization: non-main groups can schedule for themselves or explicitly allowed targets
-        const sourceGroupEntry = Object.values(registeredGroups).find(g => g.folder === sourceGroup);
-        const allowedTargetJids: string[] = (sourceGroupEntry?.containerConfig?.allowedTargetGroups ?? []) as string[];
-        if (!isMain && targetFolder !== sourceGroup && !allowedTargetJids.includes(targetJid)) {
+        const sourceGroupEntry = Object.values(registeredGroups).find(
+          (g) => g.folder === sourceGroup,
+        );
+        const allowedTargetJids: string[] = (sourceGroupEntry?.containerConfig
+          ?.allowedTargetGroups ?? []) as string[];
+        if (
+          !isMain &&
+          targetFolder !== sourceGroup &&
+          !allowedTargetJids.includes(targetJid)
+        ) {
           logger.warn(
             { sourceGroup, targetFolder, allowedTargetJids },
             'Unauthorized schedule_task attempt blocked',
@@ -570,6 +580,56 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'get_book':
+      if (data.title && data.requestId) {
+        const responseDir = path.join(
+          resolveGroupIpcPath(sourceGroup),
+          'responses',
+        );
+        fs.mkdirSync(responseDir, { recursive: true });
+        const responseFile = path.join(responseDir, data.requestId + '.json');
+        const title = String(data.title);
+        const author = data.author ? String(data.author) : '';
+        logger.info({ title, author, sourceGroup }, 'Running BookDrop');
+        import('child_process').then(({ execFile }) => {
+          const shellQuote = (s: string) => "'" + s.replace(/'/g, "'\''") + "'";
+          const remoteArgs = ['python3', '/root/bookdrop/bookdrop.py', title];
+          if (author) remoteArgs.push(author);
+          const remoteCmd = remoteArgs.map(shellQuote).join(' ');
+          execFile(
+            'ssh',
+            [
+              '-o',
+              'BatchMode=yes',
+              '-o',
+              'ConnectTimeout=10',
+              '-o',
+              'StrictHostKeyChecking=no',
+              'root@100.112.19.152',
+              remoteCmd,
+            ],
+            { timeout: 300000 },
+            (err, stdout, stderr) => {
+              if (err) {
+                fs.writeFileSync(
+                  responseFile,
+                  JSON.stringify({ error: stderr || err.message }),
+                );
+              } else {
+                fs.writeFileSync(
+                  responseFile,
+                  JSON.stringify({
+                    output: stdout.trim() || 'Book sent to Kindle.',
+                  }),
+                );
+              }
+            },
+          );
+        });
+      } else {
+        logger.warn({ data }, 'Invalid get_book request - missing fields');
+      }
+      break;
     case 'restart_nanoclaw':
       // Safe restart: uses process.exit so launchd restarts us cleanly.
       // No SSH, no SIGTERM race conditions.

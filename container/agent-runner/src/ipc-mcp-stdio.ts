@@ -354,6 +354,58 @@ server.tool(
   },
 );
 
+
+server.tool(
+  'get_book',
+  'Add a book to your Kindle via BookDrop. Searches for the book, downloads it, and emails it to your Kindle. Takes a few minutes. Use this when asked to send a book to Kindle.',
+  {
+    title: z.string().describe('Book title to search for'),
+    author: z.string().optional().describe('Author name (optional, improves search accuracy)'),
+  },
+  async (args) => {
+    const requestId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const responsesDir = path.join(IPC_DIR, 'responses');
+    fs.mkdirSync(responsesDir, { recursive: true });
+    const responseFile = path.join(responsesDir, requestId + '.json');
+
+    const data = {
+      type: 'get_book',
+      requestId,
+      title: args.title,
+      author: args.author,
+      chatJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    // Poll for response (BookDrop can take a few minutes to download)
+    const timeout = 300000;
+    const interval = 2000;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, interval));
+      if (fs.existsSync(responseFile)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          if (result.error) {
+            return { content: [{ type: 'text' as const, text: 'BookDrop error: ' + result.error }], isError: true };
+          }
+          return { content: [{ type: 'text' as const, text: result.output }] };
+        } catch {
+          fs.unlinkSync(responseFile);
+          return { content: [{ type: 'text' as const, text: 'Failed to parse BookDrop response' }], isError: true };
+        }
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'BookDrop timed out after 5 minutes' }], isError: true };
+  },
+);
+
 server.tool(
   'restart_nanoclaw',
   'Safely restart the NanoClaw orchestrator service. Requires host access privilege. Use this instead of ssh_localhost with launchctl commands. The service will restart cleanly via launchd after a 2-second delay.',

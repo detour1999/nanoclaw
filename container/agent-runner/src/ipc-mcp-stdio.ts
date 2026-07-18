@@ -406,6 +406,56 @@ server.tool(
   },
 );
 
+
+server.tool(
+  'get_secret',
+  'Retrieve a secret from 1Password by reference URI. Use this to fetch credentials, API keys, passwords, and other secrets. Reference format: op://VaultName/ItemName/FieldName (e.g. op://Homelab Agents/Proxmox/password). Returns the secret value as a string.',
+  {
+    reference: z.string().describe('1Password reference URI, e.g. op://Homelab Agents/Proxmox/password'),
+  },
+  async (args) => {
+    const requestId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const responsesDir = path.join(IPC_DIR, 'responses');
+    fs.mkdirSync(responsesDir, { recursive: true });
+    const responseFile = path.join(responsesDir, requestId + '.json');
+
+    const data = {
+      type: 'get_secret',
+      requestId,
+      reference: args.reference,
+      chatJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    // Poll for response
+    const timeout = 15000;
+    const interval = 500;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, interval));
+      if (fs.existsSync(responseFile)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          if (result.error) {
+            return { content: [{ type: 'text' as const, text: '1Password error: ' + result.error }], isError: true };
+          }
+          return { content: [{ type: 'text' as const, text: result.output }] };
+        } catch {
+          fs.unlinkSync(responseFile);
+          return { content: [{ type: 'text' as const, text: 'Failed to parse 1Password response' }], isError: true };
+        }
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'get_secret timed out' }], isError: true };
+  },
+);
+
 server.tool(
   'restart_nanoclaw',
   'Safely restart the NanoClaw orchestrator service. Requires host access privilege. Use this instead of ssh_localhost with launchctl commands. The service will restart cleanly via launchd after a 2-second delay.',

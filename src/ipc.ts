@@ -248,6 +248,8 @@ export async function processTaskIpc(
     // For get_book
     title?: string;
     author?: string;
+    // For get_secret
+    reference?: string;
     // For document_task
     description?: string;
     force?: boolean;
@@ -630,6 +632,47 @@ export async function processTaskIpc(
         logger.warn({ data }, 'Invalid get_book request - missing fields');
       }
       break;
+    case 'get_secret': {
+      if (!data.reference || !data.requestId) {
+        logger.warn({ data }, 'Invalid get_secret request - missing fields');
+        break;
+      }
+      const responseDir = path.join(
+        resolveGroupIpcPath(sourceGroup),
+        'responses',
+      );
+      fs.mkdirSync(responseDir, { recursive: true });
+      const responseFile = path.join(responseDir, `${data.requestId}.json`);
+      try {
+        const { readEnvFile } = await import('./env.js');
+        const env = readEnvFile(['OP_SERVICE_ACCOUNT_TOKEN']);
+        const opToken = env['OP_SERVICE_ACCOUNT_TOKEN'];
+        if (!opToken) {
+          fs.writeFileSync(responseFile, JSON.stringify({ error: 'OP_SERVICE_ACCOUNT_TOKEN not configured' }));
+          break;
+        }
+        const { execFile } = await import('child_process');
+        const reference = String(data.reference);
+        logger.info({ reference, sourceGroup }, 'Fetching secret from 1Password');
+        execFile(
+          '/opt/homebrew/bin/op',
+          ['read', reference],
+          { env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: opToken }, timeout: 15000 },
+          (err, stdout, stderr) => {
+            if (err) {
+              logger.error({ reference, error: stderr || err.message }, '1Password op read failed');
+              fs.writeFileSync(responseFile, JSON.stringify({ error: stderr?.trim() || err.message }));
+            } else {
+              fs.writeFileSync(responseFile, JSON.stringify({ output: stdout.trim() }));
+            }
+          },
+        );
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        fs.writeFileSync(responseFile, JSON.stringify({ error: errMsg }));
+      }
+      break;
+    }
     case 'restart_nanoclaw':
       // Safe restart: uses process.exit so launchd restarts us cleanly.
       // No SSH, no SIGTERM race conditions.

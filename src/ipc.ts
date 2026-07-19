@@ -648,22 +648,42 @@ export async function processTaskIpc(
         const env = readEnvFile(['OP_SERVICE_ACCOUNT_TOKEN']);
         const opToken = env['OP_SERVICE_ACCOUNT_TOKEN'];
         if (!opToken) {
-          fs.writeFileSync(responseFile, JSON.stringify({ error: 'OP_SERVICE_ACCOUNT_TOKEN not configured' }));
+          fs.writeFileSync(
+            responseFile,
+            JSON.stringify({
+              error: 'OP_SERVICE_ACCOUNT_TOKEN not configured',
+            }),
+          );
           break;
         }
         const { execFile } = await import('child_process');
         const reference = String(data.reference);
-        logger.info({ reference, sourceGroup }, 'Fetching secret from 1Password');
+        logger.info(
+          { reference, sourceGroup },
+          'Fetching secret from 1Password',
+        );
         execFile(
           '/opt/homebrew/bin/op',
           ['read', reference],
-          { env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: opToken }, timeout: 15000 },
+          {
+            env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: opToken },
+            timeout: 15000,
+          },
           (err, stdout, stderr) => {
             if (err) {
-              logger.error({ reference, error: stderr || err.message }, '1Password op read failed');
-              fs.writeFileSync(responseFile, JSON.stringify({ error: stderr?.trim() || err.message }));
+              logger.error(
+                { reference, error: stderr || err.message },
+                '1Password op read failed',
+              );
+              fs.writeFileSync(
+                responseFile,
+                JSON.stringify({ error: stderr?.trim() || err.message }),
+              );
             } else {
-              fs.writeFileSync(responseFile, JSON.stringify({ output: stdout.trim() }));
+              fs.writeFileSync(
+                responseFile,
+                JSON.stringify({ output: stdout.trim() }),
+              );
             }
           },
         );

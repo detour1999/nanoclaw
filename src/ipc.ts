@@ -48,12 +48,21 @@ let ipcWatcherRunning = false;
 // Circuit breaker: prevent runaway task delegation loops.
 // Tracks per-(sourceGroup, targetFolder) dispatch timestamps in a rolling window.
 // Configurable via CIRCUIT_BREAKER_WINDOW_MS, CIRCUIT_BREAKER_MAX_TASKS env vars.
-const CB_WINDOW_MS = parseInt(process.env.CIRCUIT_BREAKER_WINDOW_MS || "1800000", 10); // 30 min
-const CB_MAX_TASKS = parseInt(process.env.CIRCUIT_BREAKER_MAX_TASKS || "10", 10);
+const CB_WINDOW_MS = parseInt(
+  process.env.CIRCUIT_BREAKER_WINDOW_MS || '1800000',
+  10,
+); // 30 min
+const CB_MAX_TASKS = parseInt(
+  process.env.CIRCUIT_BREAKER_MAX_TASKS || '10',
+  10,
+);
 const cbDispatchLog = new Map<string, number[]>();
 
-function circuitBreakerAllow(sourceGroup: string, targetFolder: string): boolean {
-  const key = sourceGroup + "|" + targetFolder;
+function circuitBreakerAllow(
+  sourceGroup: string,
+  targetFolder: string,
+): boolean {
+  const key = sourceGroup + '|' + targetFolder;
   const now = Date.now();
   const cutoff = now - CB_WINDOW_MS;
   const timestamps = (cbDispatchLog.get(key) ?? []).filter((t) => t > cutoff);
@@ -64,7 +73,6 @@ function circuitBreakerAllow(sourceGroup: string, targetFolder: string): boolean
   cbDispatchLog.set(key, timestamps);
   return true;
 }
-
 
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
@@ -366,14 +374,29 @@ export async function processTaskIpc(
         // Circuit breaker: block if dispatch rate limit exceeded
         if (!circuitBreakerAllow(sourceGroup, targetFolder)) {
           logger.warn(
-            { sourceGroup, targetFolder, windowMs: CB_WINDOW_MS, maxTasks: CB_MAX_TASKS },
-            "Circuit breaker tripped: dispatch rate limit exceeded, task blocked",
+            {
+              sourceGroup,
+              targetFolder,
+              windowMs: CB_WINDOW_MS,
+              maxTasks: CB_MAX_TASKS,
+            },
+            'Circuit breaker tripped: dispatch rate limit exceeded, task blocked',
           );
-          const mainEntry = Object.entries(registeredGroups).find(([, g]) => g.isMain);
+          const mainEntry = Object.entries(registeredGroups).find(
+            ([, g]) => g.isMain,
+          );
           if (mainEntry) {
             await deps.sendMessage(
               mainEntry[0],
-              "Circuit breaker: " + sourceGroup + " dispatched >" + CB_MAX_TASKS + " tasks to " + targetFolder + " within " + (CB_WINDOW_MS / 60000) + " min. Task blocked. Possible runaway loop.",
+              'Circuit breaker: ' +
+                sourceGroup +
+                ' dispatched >' +
+                CB_MAX_TASKS +
+                ' tasks to ' +
+                targetFolder +
+                ' within ' +
+                CB_WINDOW_MS / 60000 +
+                ' min. Task blocked. Possible runaway loop.',
             );
           }
           break;

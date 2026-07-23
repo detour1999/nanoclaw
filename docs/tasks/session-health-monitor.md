@@ -74,9 +74,34 @@ State schema:
 **401s cleared:** Reset `outage_notified: false`
 
 **Rate limit hit (new pane, not yet in state):**
-- Call `mcp__nanoclaw__send_message` once: pane, reset time, when I'll restart
-- Schedule one-shot restart task at reset_time + 1 min
-- Mark pane as notified in state
+
+1. **Read the dialog.** Capture the pane and parse the reset time:
+   - Pattern: `resets at (\d+:\d+ [AP]M)` or `resets in (\d+:\d+)`
+   - Convert to an absolute UTC datetime
+
+2. **Choose wait in the dialog.** If the pane shows an interactive menu (lines starting with `>` or `1.`), send the "wait" option:
+   ```bash
+   tmux send-keys -t SESSION:WINDOW '1' Enter
+   ```
+   If the pane already auto-paused (no interactive menu visible), leave it alone — Claude Code will sit there until continued.
+
+3. **Schedule a "continue" task** (one-shot at reset_time + 1 min):
+   Prompt for the one-shot task:
+   ```
+   Send 'continue' to tmux pane SESSION:WINDOW to resume Claude after rate limit cleared.
+   Steps:
+   1. Capture pane: tmux capture-pane -t SESSION:WINDOW -p | tail -8
+   2. If shows > at prompt: tmux send-keys -t SESSION:WINDOW 'continue' Enter
+   3. Wait 10 seconds, capture again to verify Claude resumed (spinner or new output visible)
+   4. If still at > prompt with no change: send_message to Dylan once flagging SESSION:WINDOW failed to resume
+   ```
+
+4. **Notify Dylan** once via `mcp__nanoclaw__send_message`:
+   ```
+   Rate limit hit: SESSION:WINDOW — resets at HH:MM AM/PM. Will send continue at HH:MM+1.
+   ```
+
+5. Mark pane in state with reset_time.
 
 **Rate-limited pane recovered:** Remove from state
 

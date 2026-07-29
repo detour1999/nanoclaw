@@ -116,7 +116,9 @@ State schema:
   ```
 
 - Add all newly-notified panes to `waiting_notified` with current timestamp
-- If a pane was in `waiting_notified` but is now actively working (spinner text visible): remove it from `waiting_notified` so it can be re-notified next time it waits
+- **Do NOT remove a pane from `waiting_notified` just because a spinner briefly appears.** Spinners are transient and cause re-notification spam. Only remove a pane from `waiting_notified` when:
+  1. It is no longer in `claude_running` status in state.db (Claude actually finished/exited), OR
+  2. 6+ hours have passed since the timestamp in `waiting_notified` AND the pane content has meaningfully changed (different last line before `❯`)
 
 **Important:** Batch all waiting-agent notifications into the single allowed `send_message` call. Combine with any other alerts if needed.
 

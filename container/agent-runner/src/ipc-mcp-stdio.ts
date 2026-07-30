@@ -409,7 +409,7 @@ server.tool(
 
 server.tool(
   'get_secret',
-  'Retrieve a secret from 1Password by reference URI. Use this to fetch credentials, API keys, passwords, and other secrets. Reference format: op://VaultName/ItemName/FieldName (e.g. op://Homelab Agents/Proxmox/password). Returns the secret value as a string.',
+  'Retrieve a secret from 1Password by reference URI. Reference format: op://VaultName/ItemName/FieldName (e.g. op://Homelab Agents/Proxmox/password). Returns the secret value as a string. If the reference fails or the item name is ambiguous, returns an error with a `candidates` array of fuzzy matches including their titles, usernames, updated_at timestamps, and suggested_reference paths — retry with the correct suggested_reference.',
   {
     reference: z.string().describe('1Password reference URI, e.g. op://Homelab Agents/Proxmox/password'),
   },

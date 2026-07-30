@@ -721,22 +721,66 @@ export async function processTaskIpc(
           { reference, sourceGroup },
           'Fetching secret from 1Password',
         );
+        const opEnv = { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: opToken };
+
+        // Helper: fuzzy-search vault for candidates matching a term
+        const findCandidates = (vault: string, term: string): Promise<object[]> => {
+          return new Promise((resolve) => {
+            execFile(
+              '/opt/homebrew/bin/op',
+              ['item', 'list', '--vault', vault, '--format', 'json'],
+              { env: opEnv, timeout: 15000 },
+              (e, out) => {
+                if (e || !out) return resolve([]);
+                try {
+                  const items: Array<{ title: string; updated_at?: string; fields?: Array<{ label: string; value: string }> }> = JSON.parse(out);
+                  const lower = term.toLowerCase();
+                  const matches = items.filter(i => i.title.toLowerCase().includes(lower));
+                  resolve(
+                    matches.map(i => {
+                      const usernameField = (i.fields || []).find(
+                        (f: { label: string; value: string }) => f.label === 'username',
+                      );
+                      return {
+                        title: i.title,
+                        username: usernameField?.value ?? null,
+                        updated_at: i.updated_at ?? null,
+                        suggested_reference: `op://${vault}/${i.title}/password`,
+                      };
+                    }),
+                  );
+                } catch {
+                  resolve([]);
+                }
+              },
+            );
+          });
+        };
+
         execFile(
           '/opt/homebrew/bin/op',
           ['read', reference],
-          {
-            env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: opToken },
-            timeout: 15000,
-          },
-          (err, stdout, stderr) => {
-            if (err) {
+          { env: opEnv, timeout: 15000 },
+          async (err, stdout, stderr) => {
+            if (err || !stdout.trim()) {
               logger.error(
-                { reference, error: stderr || err.message },
-                '1Password op read failed',
+                { reference, error: stderr || err?.message },
+                '1Password op read failed — attempting fuzzy fallback',
               );
+              // Parse vault and item name from reference: op://Vault/Item/field
+              const parts = reference.replace(/^op:\/\//, '').split('/');
+              const vault = parts[0] ?? 'Homelab Agents';
+              const itemTerm = parts[1] ?? reference;
+              const candidates = await findCandidates(vault, itemTerm);
               fs.writeFileSync(
                 responseFile,
-                JSON.stringify({ error: stderr?.trim() || err.message }),
+                JSON.stringify({
+                  error: stderr?.trim() || err?.message || 'empty result',
+                  candidates: candidates.length > 0 ? candidates : undefined,
+                  hint: candidates.length > 0
+                    ? `No exact match for "${itemTerm}". ${candidates.length} candidate(s) found — retry with suggested_reference.`
+                    : `No items in vault "${vault}" match "${itemTerm}".`,
+                }),
               );
             } else {
               fs.writeFileSync(

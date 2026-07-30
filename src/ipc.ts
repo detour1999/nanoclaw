@@ -724,7 +724,10 @@ export async function processTaskIpc(
         const opEnv = { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: opToken };
 
         // Helper: fuzzy-search vault for candidates matching a term
-        const findCandidates = (vault: string, term: string): Promise<object[]> => {
+        const findCandidates = (
+          vault: string,
+          term: string,
+        ): Promise<object[]> => {
           return new Promise((resolve) => {
             execFile(
               '/opt/homebrew/bin/op',
@@ -733,13 +736,20 @@ export async function processTaskIpc(
               (e, out) => {
                 if (e || !out) return resolve([]);
                 try {
-                  const items: Array<{ title: string; updated_at?: string; fields?: Array<{ label: string; value: string }> }> = JSON.parse(out);
+                  const items: Array<{
+                    title: string;
+                    updated_at?: string;
+                    fields?: Array<{ label: string; value: string }>;
+                  }> = JSON.parse(out);
                   const lower = term.toLowerCase();
-                  const matches = items.filter(i => i.title.toLowerCase().includes(lower));
+                  const matches = items.filter((i) =>
+                    i.title.toLowerCase().includes(lower),
+                  );
                   resolve(
-                    matches.map(i => {
+                    matches.map((i) => {
                       const usernameField = (i.fields || []).find(
-                        (f: { label: string; value: string }) => f.label === 'username',
+                        (f: { label: string; value: string }) =>
+                          f.label === 'username',
                       );
                       return {
                         title: i.title,
@@ -777,9 +787,10 @@ export async function processTaskIpc(
                 JSON.stringify({
                   error: stderr?.trim() || err?.message || 'empty result',
                   candidates: candidates.length > 0 ? candidates : undefined,
-                  hint: candidates.length > 0
-                    ? `No exact match for "${itemTerm}". ${candidates.length} candidate(s) found — retry with suggested_reference.`
-                    : `No items in vault "${vault}" match "${itemTerm}".`,
+                  hint:
+                    candidates.length > 0
+                      ? `No exact match for "${itemTerm}". ${candidates.length} candidate(s) found — retry with suggested_reference.`
+                      : `No items in vault "${vault}" match "${itemTerm}".`,
                 }),
               );
             } else {

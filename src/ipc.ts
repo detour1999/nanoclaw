@@ -695,10 +695,16 @@ export async function processTaskIpc(
       break;
     case 'get_messages': {
       if (!data.requestId) {
-        logger.warn({ data }, 'Invalid get_messages request - missing requestId');
+        logger.warn(
+          { data },
+          'Invalid get_messages request - missing requestId',
+        );
         break;
       }
-      const responseDir = path.join(resolveGroupIpcPath(sourceGroup), 'responses');
+      const responseDir = path.join(
+        resolveGroupIpcPath(sourceGroup),
+        'responses',
+      );
       fs.mkdirSync(responseDir, { recursive: true });
       const responseFile = path.join(responseDir, `${data.requestId}.json`);
 
@@ -719,7 +725,8 @@ export async function processTaskIpc(
         fs.writeFileSync(
           responseFile,
           JSON.stringify({
-            error: 'Cross-group read not permitted; specify a folder you can read',
+            error:
+              'Cross-group read not permitted; specify a folder you can read',
           }),
         );
         break;
@@ -741,7 +748,10 @@ export async function processTaskIpc(
       try {
         const { execFile } = await import('child_process');
         const folder = requestedFolder;
-        const limit = Math.min(parseInt(String(data.limit || '20'), 10) || 20, 200);
+        const limit = Math.min(
+          parseInt(String(data.limit || '20'), 10) || 20,
+          200,
+        );
         const dbPath = path.join(process.cwd(), 'store', 'messages.db');
         const sql = folder
           ? `SELECT m.timestamp, COALESCE(m.sender_name, m.sender) AS sender, m.content, m.is_from_me
@@ -759,20 +769,40 @@ export async function processTaskIpc(
           { timeout: 10000 },
           (err, stdout, stderr) => {
             if (err) {
-              fs.writeFileSync(responseFile, JSON.stringify({ error: stderr?.trim() || err.message }));
+              fs.writeFileSync(
+                responseFile,
+                JSON.stringify({ error: stderr?.trim() || err.message }),
+              );
             } else {
               try {
                 const rows = JSON.parse(stdout || '[]');
-                fs.writeFileSync(responseFile, JSON.stringify({ messages: rows, folder, count: rows.length }));
+                fs.writeFileSync(
+                  responseFile,
+                  JSON.stringify({
+                    messages: rows,
+                    folder,
+                    count: rows.length,
+                  }),
+                );
               } catch {
-                fs.writeFileSync(responseFile, JSON.stringify({ error: 'Failed to parse sqlite output', raw: stdout.slice(0, 500) }));
+                fs.writeFileSync(
+                  responseFile,
+                  JSON.stringify({
+                    error: 'Failed to parse sqlite output',
+                    raw: stdout.slice(0, 500),
+                  }),
+                );
               }
             }
           },
         );
       } catch (error: unknown) {
         const errMsg = error instanceof Error ? error.message : String(error);
-        const responseFile2 = path.join(resolveGroupIpcPath(sourceGroup), 'responses', `${data.requestId}.json`);
+        const responseFile2 = path.join(
+          resolveGroupIpcPath(sourceGroup),
+          'responses',
+          `${data.requestId}.json`,
+        );
         fs.writeFileSync(responseFile2, JSON.stringify({ error: errMsg }));
       }
       break;

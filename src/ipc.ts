@@ -278,6 +278,8 @@ export async function processTaskIpc(
     author?: string;
     // For get_secret
     reference?: string;
+    // For get_messages
+    limit?: number;
     // For document_task
     description?: string;
     force?: boolean;
@@ -691,6 +693,90 @@ export async function processTaskIpc(
         logger.warn({ data }, 'Invalid get_book request - missing fields');
       }
       break;
+    case 'get_messages': {
+      if (!data.requestId) {
+        logger.warn({ data }, 'Invalid get_messages request - missing requestId');
+        break;
+      }
+      const responseDir = path.join(resolveGroupIpcPath(sourceGroup), 'responses');
+      fs.mkdirSync(responseDir, { recursive: true });
+      const responseFile = path.join(responseDir, `${data.requestId}.json`);
+
+      // Hierarchy auth: main reads all; others read self + explicit reports
+      // (reports = the allowedTargetGroups set they can also schedule tasks for).
+      const sourceGroupEntry = Object.values(registeredGroups).find(
+        (g) => g.folder === sourceGroup,
+      );
+      const allowedTargetJids: string[] = (sourceGroupEntry?.containerConfig
+        ?.allowedTargetGroups ?? []) as string[];
+      const readableFolders = new Set<string>([sourceGroup]);
+      for (const jid of allowedTargetJids) {
+        const g = registeredGroups[jid];
+        if (g) readableFolders.add(g.folder);
+      }
+      const requestedFolder = String(data.folder || '');
+      if (!isMain && requestedFolder === '') {
+        fs.writeFileSync(
+          responseFile,
+          JSON.stringify({
+            error: 'Cross-group read not permitted; specify a folder you can read',
+          }),
+        );
+        break;
+      }
+      if (!isMain && !readableFolders.has(requestedFolder)) {
+        logger.warn(
+          { sourceGroup, requestedFolder, readable: [...readableFolders] },
+          'Unauthorized get_messages attempt blocked',
+        );
+        fs.writeFileSync(
+          responseFile,
+          JSON.stringify({
+            error: `Not authorized to read "${requestedFolder}"`,
+          }),
+        );
+        break;
+      }
+
+      try {
+        const { execFile } = await import('child_process');
+        const folder = requestedFolder;
+        const limit = Math.min(parseInt(String(data.limit || '20'), 10) || 20, 200);
+        const dbPath = path.join(process.cwd(), 'store', 'messages.db');
+        const sql = folder
+          ? `SELECT m.timestamp, COALESCE(m.sender_name, m.sender) AS sender, m.content, m.is_from_me
+             FROM messages m
+             JOIN registered_groups rg ON m.chat_jid = rg.jid
+             WHERE rg.folder = '${folder.replace(/'/g, "''")}'
+             ORDER BY m.timestamp DESC LIMIT ${limit};`
+          : `SELECT rg.folder, rg.name, m.timestamp, COALESCE(m.sender_name, m.sender) AS sender, m.content, m.is_from_me
+             FROM messages m
+             JOIN registered_groups rg ON m.chat_jid = rg.jid
+             ORDER BY m.timestamp DESC LIMIT ${limit};`;
+        execFile(
+          'sqlite3',
+          ['-json', dbPath, sql],
+          { timeout: 10000 },
+          (err, stdout, stderr) => {
+            if (err) {
+              fs.writeFileSync(responseFile, JSON.stringify({ error: stderr?.trim() || err.message }));
+            } else {
+              try {
+                const rows = JSON.parse(stdout || '[]');
+                fs.writeFileSync(responseFile, JSON.stringify({ messages: rows, folder, count: rows.length }));
+              } catch {
+                fs.writeFileSync(responseFile, JSON.stringify({ error: 'Failed to parse sqlite output', raw: stdout.slice(0, 500) }));
+              }
+            }
+          },
+        );
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        const responseFile2 = path.join(resolveGroupIpcPath(sourceGroup), 'responses', `${data.requestId}.json`);
+        fs.writeFileSync(responseFile2, JSON.stringify({ error: errMsg }));
+      }
+      break;
+    }
     case 'get_secret': {
       if (!data.reference || !data.requestId) {
         logger.warn({ data }, 'Invalid get_secret request - missing fields');

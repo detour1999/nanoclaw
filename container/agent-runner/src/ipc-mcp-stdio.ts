@@ -408,6 +408,39 @@ server.tool(
 
 
 server.tool(
+  'get_messages',
+  `Read recent conversation messages from a group by folder name. You can read your own group and any group that reports to you (main reads all). Leave folder empty to read across all groups (main only). Returns messages in reverse-chronological order.`,
+  {
+    folder: z.string().describe('Group folder name to read from (e.g. "rando", "jo", "hans", "mo", "reed"). Leave empty to get recent messages across all groups.'),
+    limit: z.number().optional().describe('Number of messages to return (default 20, max 200)'),
+  },
+  async (args) => {
+    const requestId = `get_messages_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const taskPath = `/workspace/ipc/tasks/${requestId}.json`;
+    const responsePath = `/workspace/ipc/responses/${requestId}.json`;
+    const fs = await import('fs');
+    fs.writeFileSync(taskPath, JSON.stringify({ type: 'get_messages', folder: args.folder || '', limit: args.limit || 20, requestId }));
+    const start = Date.now();
+    while (Date.now() - start < 15000) {
+      await new Promise(r => setTimeout(r, 300));
+      if (fs.existsSync(responsePath)) {
+        const result = JSON.parse(fs.readFileSync(responsePath, 'utf8'));
+        fs.unlinkSync(responsePath);
+        if (result.error) return { content: [{ type: 'text' as const, text: `Error: ${result.error}` }], isError: true };
+        const msgs = (result.messages || []).reverse();
+        const lines = msgs.map((m: {timestamp: string; sender: string; is_from_me: number; content: string; folder?: string}) =>
+          `[${m.timestamp}] ${m.is_from_me ? '(bot)' : m.sender}: ${m.content}`
+        );
+        return { content: [{ type: 'text' as const, text: `${result.count} messages from "${result.folder || 'all'}":
+
+${lines.join('\n')}` }] };
+      }
+    }
+    return { content: [{ type: 'text' as const, text: 'get_messages timed out' }], isError: true };
+  },
+);
+
+server.tool(
   'get_secret',
   'Retrieve a secret from 1Password by reference URI. Reference format: op://VaultName/ItemName/FieldName (e.g. op://Homelab Agents/Proxmox/password). Returns the secret value as a string. If the reference fails or the item name is ambiguous, returns an error with a `candidates` array of fuzzy matches including their titles, usernames, updated_at timestamps, and suggested_reference paths — retry with the correct suggested_reference.',
   {

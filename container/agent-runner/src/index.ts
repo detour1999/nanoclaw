@@ -28,7 +28,19 @@ interface ContainerInput {
   hostAccess?: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  // Extra MCP servers wired in by the host from group config (secrets pre-resolved).
+  mcpServers?: Record<string, McpServerConfig>;
 }
+
+type McpServerConfig =
+  | {
+      type: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    }
+  | { type: 'sse'; url: string; headers?: Record<string, string> }
+  | { type: 'http'; url: string; headers?: Record<string, string> };
 
 interface ContainerOutput {
   status: 'success' | 'error';
@@ -408,7 +420,10 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        ...Object.keys(containerInput.mcpServers ?? {}).map(
+          (name) => `mcp__${name}__*`,
+        ),
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -425,6 +440,7 @@ async function runQuery(
             NANOCLAW_HOST_ACCESS: (containerInput.isMain || containerInput.hostAccess) ? '1' : '0',
           },
         },
+        ...(containerInput.mcpServers ?? {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

@@ -490,6 +490,9 @@ async function main(): Promise<void> {
     containerInput = JSON.parse(stdinData);
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
+    log(
+      `DIAG mcpServers received: ${JSON.stringify(Object.keys(containerInput.mcpServers ?? {}))} | sample=${JSON.stringify(containerInput.mcpServers?.homeassistant ? { type: (containerInput.mcpServers.homeassistant as { type: string }).type, url: (containerInput.mcpServers.homeassistant as { url?: string }).url, hasAuth: !!(containerInput.mcpServers.homeassistant as { headers?: Record<string, string> }).headers?.Authorization } : 'none')}`,
+    );
   } catch (err) {
     writeOutput({
       status: 'error',

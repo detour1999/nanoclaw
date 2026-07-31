@@ -320,9 +320,23 @@ export async function runContainerAgent(
   // land in the DB or a mounted file.
   const mcpServers = group.containerConfig?.mcpServers;
   let resolvedMcpServers: Record<string, unknown> | undefined;
+  logger.info(
+    {
+      group: group.folder,
+      mcpServerNames: mcpServers ? Object.keys(mcpServers) : [],
+    },
+    'DIAG: mcpServers pre-resolve',
+  );
   if (mcpServers && Object.keys(mcpServers).length > 0) {
     try {
       resolvedMcpServers = await resolveOpRefs(mcpServers);
+      logger.info(
+        {
+          group: group.folder,
+          resolvedNames: Object.keys(resolvedMcpServers ?? {}),
+        },
+        'DIAG: mcpServers post-resolve OK',
+      );
     } catch (err) {
       logger.warn(
         { group: group.folder, err: err instanceof Error ? err.message : err },

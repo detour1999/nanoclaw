@@ -50,6 +50,11 @@ export interface ContainerConfig {
   // Extra DNS servers passed to `--dns` at spawn. Useful for groups that need
   // to resolve LAN names via a private resolver reachable over Tailscale.
   dnsServers?: string[];
+  // Host-side TCP relays. Apple Container's NAT can't reach Tailscale-routed
+  // subnets, so hosts on those subnets must be proxied through the host mac.
+  // The host binds `listen` on the container gateway interface and forwards
+  // to `target` (host:port), reachable from the host's own networking stack.
+  hostRelays?: Array<{ listen: number; target: string }>;
 }
 
 export interface RegisteredGroup {

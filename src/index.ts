@@ -10,6 +10,7 @@ import {
   TRIGGER_PATTERN,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
+import { ensureRelay, stopAllRelays } from './host-relay.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -329,7 +330,7 @@ async function runAgent(
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
-        if (output.newSessionId) {
+        if (output.newSessionId && output.status !== 'error') {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
         }
@@ -354,7 +355,7 @@ async function runAgent(
       wrappedOnOutput,
     );
 
-    if (output.newSessionId) {
+    if (output.newSessionId && output.status !== 'error') {
       sessions[group.folder] = output.newSessionId;
       setSession(group.folder, output.newSessionId);
     }
@@ -512,10 +513,22 @@ async function main(): Promise<void> {
     PROXY_BIND_HOST,
   );
 
+  // Start host-side TCP relays for any group that declares hostRelays.
+  // These let containers reach LAN/Tailscale targets by bouncing through
+  // the container gateway interface (Apple Container's NAT can't route
+  // to Tailscale subnets directly).
+  for (const [jid, group] of Object.entries(registeredGroups)) {
+    for (const r of group.containerConfig?.hostRelays ?? []) {
+      ensureRelay(group.folder, r.listen, r.target);
+    }
+    void jid;
+  }
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     proxyServer.close();
+    stopAllRelays();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);

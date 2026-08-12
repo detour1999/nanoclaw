@@ -776,12 +776,17 @@ export async function processTaskIpc(
             } else {
               try {
                 const rows = JSON.parse(stdout || '[]');
+                // Sanitize lone surrogates to prevent API JSON errors
+                const sanitized = rows.map((r: Record<string, unknown>) => ({
+                  ...r,
+                  content: typeof r.content === 'string' ? r.content.toWellFormed() : r.content,
+                }));
                 fs.writeFileSync(
                   responseFile,
                   JSON.stringify({
-                    messages: rows,
+                    messages: sanitized,
                     folder,
-                    count: rows.length,
+                    count: sanitized.length,
                   }),
                 );
               } catch {

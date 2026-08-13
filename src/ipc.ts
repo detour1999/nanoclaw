@@ -779,7 +779,10 @@ export async function processTaskIpc(
                 // Sanitize lone surrogates to prevent API JSON errors
                 const sanitized = rows.map((r: Record<string, unknown>) => ({
                   ...r,
-                  content: typeof r.content === 'string' ? r.content.toWellFormed() : r.content,
+                  content:
+                    typeof r.content === 'string'
+                      ? r.content.toWellFormed()
+                      : r.content,
                 }));
                 fs.writeFileSync(
                   responseFile,

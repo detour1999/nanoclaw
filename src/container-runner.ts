@@ -740,6 +740,11 @@ export function writeTasksSnapshot(
     : tasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
+  const normalizedTasks = filteredTasks.map((t) => ({
+    ...t,
+    // Coerce prompt to string — SQLite may return Buffer for BLOB columns
+    prompt: Buffer.isBuffer(t.prompt) ? (t.prompt as Buffer).toString('utf-8') : String(t.prompt),
+  }));
   fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
 }
 

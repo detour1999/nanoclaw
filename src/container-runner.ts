@@ -743,7 +743,9 @@ export function writeTasksSnapshot(
   const normalizedTasks = filteredTasks.map((t) => ({
     ...t,
     // Coerce prompt to string — SQLite may return Buffer for BLOB columns
-    prompt: Buffer.isBuffer(t.prompt) ? (t.prompt as Buffer).toString('utf-8') : String(t.prompt),
+    prompt: Buffer.isBuffer(t.prompt)
+      ? (t.prompt as Buffer).toString('utf-8')
+      : String(t.prompt),
   }));
   fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
 }

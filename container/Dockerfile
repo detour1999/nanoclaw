@@ -33,6 +33,14 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code netlify-cli
 
+# mise: per-project toolchain manager. Needed by repos that pin tool versions in
+# mise.toml — the blog upgrade script bumps its Hugo pin and must verify the
+# build against that exact version, which a fixed vendored binary cannot do.
+# Installed to /usr/local/bin so it is on PATH for every agent, not just under
+# the installer's default ~/.local/bin.
+RUN curl -sfL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh \
+    && mise --version
+
 # Create app directory
 WORKDIR /app
 

@@ -13,6 +13,14 @@ import {
 } from './config.js';
 import { executeSSHLocalhost, shellQuote } from './ssh-helper.js';
 import { BOOKDROP_TIMEOUT_MS, describeBookDropFailure } from './bookdrop.js';
+import {
+  buildSecretHint,
+  parseOpReference,
+  pickSearchVaults,
+  pickSecretField,
+  OpField,
+  SecretCandidate,
+} from './op-secrets.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder, resolveGroupIpcPath } from './group-folder.js';
@@ -849,41 +857,100 @@ export async function processTaskIpc(
         );
         const opEnv = { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: opToken };
 
+        // Helper: which vaults can this service account actually see?
+        const listAccessibleVaults = (): Promise<string[]> => {
+          return new Promise((resolve) => {
+            execFile(
+              '/opt/homebrew/bin/op',
+              ['vault', 'list', '--format', 'json'],
+              { env: opEnv, timeout: 15000 },
+              (e, out) => {
+                if (e || !out) return resolve([]);
+                try {
+                  const vaults: Array<{ name: string }> = JSON.parse(out);
+                  resolve(vaults.map((v) => v.name).filter(Boolean));
+                } catch {
+                  resolve([]);
+                }
+              },
+            );
+          });
+        };
+
+        // `op item list` omits the fields array entirely, so the secret-bearing
+        // field label has to come from `op item get` per candidate. Bounded so
+        // a broad term can't fan out into dozens of API calls.
+        const MAX_ENRICHED_CANDIDATES = 5;
+
+        const describeItem = (
+          vault: string,
+          id: string,
+          title: string,
+          updatedAt: string | null,
+        ): Promise<SecretCandidate> => {
+          return new Promise((resolve) => {
+            execFile(
+              '/opt/homebrew/bin/op',
+              ['item', 'get', id, '--vault', vault, '--format', 'json'],
+              { env: opEnv, timeout: 15000 },
+              (e, out) => {
+                let field = 'password';
+                let username: string | null = null;
+                if (!e && out) {
+                  try {
+                    const item: { fields?: OpField[] } = JSON.parse(out);
+                    const fields = item.fields ?? [];
+                    field = pickSecretField(fields);
+                    username =
+                      fields.find((f) => f.label === 'username')?.value ?? null;
+                  } catch {
+                    // fall through to the password default
+                  }
+                }
+                resolve({
+                  title,
+                  username,
+                  updated_at: updatedAt,
+                  suggested_reference: `op://${vault}/${title}/${field}`,
+                });
+              },
+            );
+          });
+        };
+
         // Helper: fuzzy-search vault for candidates matching a term
         const findCandidates = (
           vault: string,
           term: string,
-        ): Promise<object[]> => {
+        ): Promise<SecretCandidate[]> => {
           return new Promise((resolve) => {
             execFile(
               '/opt/homebrew/bin/op',
               ['item', 'list', '--vault', vault, '--format', 'json'],
               { env: opEnv, timeout: 15000 },
-              (e, out) => {
+              async (e, out) => {
                 if (e || !out) return resolve([]);
                 try {
                   const items: Array<{
+                    id: string;
                     title: string;
                     updated_at?: string;
-                    fields?: Array<{ label: string; value: string }>;
                   }> = JSON.parse(out);
                   const lower = term.toLowerCase();
-                  const matches = items.filter((i) =>
-                    i.title.toLowerCase().includes(lower),
-                  );
+                  const matches = items
+                    .filter((i) => i.title.toLowerCase().includes(lower))
+                    .slice(0, MAX_ENRICHED_CANDIDATES);
                   resolve(
-                    matches.map((i) => {
-                      const usernameField = (i.fields || []).find(
-                        (f: { label: string; value: string }) =>
-                          f.label === 'username',
-                      );
-                      return {
-                        title: i.title,
-                        username: usernameField?.value ?? null,
-                        updated_at: i.updated_at ?? null,
-                        suggested_reference: `op://${vault}/${i.title}/password`,
-                      };
-                    }),
+                    await Promise.all(
+                      matches.map((i) =>
+                        describeItem(
+                          vault,
+                          i.id,
+                          i.title,
+                          i.updated_at ?? null,
+                        ),
+                      ),
+                    ),
                   );
                 } catch {
                   resolve([]);
@@ -903,20 +970,25 @@ export async function processTaskIpc(
                 { reference, error: stderr || err?.message },
                 '1Password op read failed — attempting fuzzy fallback',
               );
-              // Parse vault and item name from reference: op://Vault/Item/field
-              const parts = reference.replace(/^op:\/\//, '').split('/');
-              const vault = parts[0] ?? 'Homelab Agents';
-              const itemTerm = parts[1] ?? reference;
-              const candidates = await findCandidates(vault, itemTerm);
+              // Searching the vault the agent named is a dead end when that
+              // vault isn't one this service account can see — fall back to
+              // every vault it can actually reach.
+              const { vault, item: itemTerm } = parseOpReference(reference);
+              const searchVaults = pickSearchVaults(
+                vault,
+                await listAccessibleVaults(),
+              );
+              const candidates = (
+                await Promise.all(
+                  searchVaults.map((v) => findCandidates(v, itemTerm)),
+                )
+              ).flat() as SecretCandidate[];
               fs.writeFileSync(
                 responseFile,
                 JSON.stringify({
                   error: stderr?.trim() || err?.message || 'empty result',
                   candidates: candidates.length > 0 ? candidates : undefined,
-                  hint:
-                    candidates.length > 0
-                      ? `No exact match for "${itemTerm}". ${candidates.length} candidate(s) found — retry with suggested_reference.`
-                      : `No items in vault "${vault}" match "${itemTerm}".`,
+                  hint: buildSecretHint(itemTerm, searchVaults, candidates),
                 }),
               );
             } else {

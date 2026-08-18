@@ -747,7 +747,7 @@ export function writeTasksSnapshot(
       ? (t.prompt as Buffer).toString('utf-8')
       : String(t.prompt),
   }));
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+  fs.writeFileSync(tasksFile, JSON.stringify(normalizedTasks, null, 2));
 }
 
 export interface AvailableGroup {

@@ -10,6 +10,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
+import { truncateChars } from './text.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -178,7 +179,7 @@ server.tool(
       const formatted = tasks
         .map(
           (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
-            `- [${t.id}] ${String(t.prompt).slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
+            `- [${t.id}] ${truncateChars(t.prompt, 50)} (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
         )
         .join('\n');
 
@@ -380,7 +381,8 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    // Poll for response (BookDrop can take a few minutes to download)
+    // Poll for a response, but don't hold the turn open for BookDrop's full
+    // 30-minute worst case — the host keeps running it after we stop waiting.
     const timeout = 300000;
     const interval = 2000;
     const deadline = Date.now() + timeout;
@@ -402,7 +404,14 @@ server.tool(
       }
     }
 
-    return { content: [{ type: 'text' as const, text: 'BookDrop timed out after 5 minutes' }], isError: true };
+    // Not an error: BookDrop is still running on Proxmox and will finish on its
+    // own. Reporting this as a failure led agents to conclude SSH was broken.
+    return {
+      content: [{
+        type: 'text' as const,
+        text: "BookDrop is still running on Proxmox after 5 minutes — this is normal for a book that has to be downloaded first. It keeps running in the background and the book will arrive at the Kindle when it finishes (up to 30 min). Don't retry, and don't report this as an SSH failure.",
+      }],
+    };
   },
 );
 

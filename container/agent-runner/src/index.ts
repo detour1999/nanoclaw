@@ -28,7 +28,19 @@ interface ContainerInput {
   hostAccess?: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  // Extra MCP servers wired in by the host from group config (secrets pre-resolved).
+  mcpServers?: Record<string, McpServerConfig>;
 }
+
+type McpServerConfig =
+  | {
+      type: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    }
+  | { type: 'sse'; url: string; headers?: Record<string, string> }
+  | { type: 'http'; url: string; headers?: Record<string, string> };
 
 interface ContainerOutput {
   status: 'success' | 'error';
@@ -250,7 +262,7 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
   for (const msg of messages) {
     const sender = msg.role === 'user' ? 'User' : (assistantName || 'Assistant');
     const content = msg.content.length > 2000
-      ? msg.content.slice(0, 2000) + '...'
+      ? [...msg.content].slice(0, 2000).join('') + '...'
       : msg.content;
     lines.push(`**${sender}**: ${content}`);
     lines.push('');
@@ -408,7 +420,10 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        ...Object.keys(containerInput.mcpServers ?? {}).map(
+          (name) => `mcp__${name}__*`,
+        ),
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -425,6 +440,7 @@ async function runQuery(
             NANOCLAW_HOST_ACCESS: (containerInput.isMain || containerInput.hostAccess) ? '1' : '0',
           },
         },
+        ...(containerInput.mcpServers ?? {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
@@ -452,7 +468,7 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${[...textResult].slice(0, 200).join('')}` : ''}`);
       writeOutput({
         status: 'success',
         result: textResult || null,
@@ -474,6 +490,9 @@ async function main(): Promise<void> {
     containerInput = JSON.parse(stdinData);
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
+    log(
+      `DIAG mcpServers received: ${JSON.stringify(Object.keys(containerInput.mcpServers ?? {}))} | sample=${JSON.stringify(containerInput.mcpServers?.homeassistant ? { type: (containerInput.mcpServers.homeassistant as { type: string }).type, url: (containerInput.mcpServers.homeassistant as { url?: string }).url, hasAuth: !!(containerInput.mcpServers.homeassistant as { headers?: Record<string, string> }).headers?.Authorization } : 'none')}`,
+    );
   } catch (err) {
     writeOutput({
       status: 'error',
@@ -501,6 +520,27 @@ async function main(): Promise<void> {
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
+
+
+  // Time-decay context injection: on fresh sessions, prepend prior context summaries.
+  // Files written by daily summarization cron at /workspace/group/context/
+  if (!sessionId && !containerInput.isScheduledTask) {
+    const contextParts: string[] = [];
+    const weekPath = '/workspace/group/context/week.md';
+    const todayPath = '/workspace/group/context/today.md';
+    try {
+      if (fs.existsSync(weekPath)) {
+        contextParts.push('## Last week\n' + fs.readFileSync(weekPath, 'utf-8').trim());
+      }
+      if (fs.existsSync(todayPath)) {
+        contextParts.push('## Earlier today\n' + fs.readFileSync(todayPath, 'utf-8').trim());
+      }
+    } catch { /* context files missing or unreadable, skip */ }
+    if (contextParts.length > 0) {
+      prompt = '[Prior conversation context]\n\n' + contextParts.join('\n\n') + '\n\n---\n\n' + prompt;
+    }
+  }
+
   const pending = drainIpcInput();
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);

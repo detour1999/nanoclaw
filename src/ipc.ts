@@ -11,7 +11,8 @@ import {
   REPO_ROOT,
   TIMEZONE,
 } from './config.js';
-import { executeSSHLocalhost } from './ssh-helper.js';
+import { executeSSHLocalhost, shellQuote } from './ssh-helper.js';
+import { BOOKDROP_TIMEOUT_MS, describeBookDropFailure } from './bookdrop.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder, resolveGroupIpcPath } from './group-folder.js';
@@ -40,10 +41,39 @@ export interface IpcDeps {
     isMain: boolean,
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
+    allowedTargetJids?: string[],
   ) => void;
 }
 
 let ipcWatcherRunning = false;
+// Circuit breaker: prevent runaway task delegation loops.
+// Tracks per-(sourceGroup, targetFolder) dispatch timestamps in a rolling window.
+// Configurable via CIRCUIT_BREAKER_WINDOW_MS, CIRCUIT_BREAKER_MAX_TASKS env vars.
+const CB_WINDOW_MS = parseInt(
+  process.env.CIRCUIT_BREAKER_WINDOW_MS || '1800000',
+  10,
+); // 30 min
+const CB_MAX_TASKS = parseInt(
+  process.env.CIRCUIT_BREAKER_MAX_TASKS || '10',
+  10,
+);
+const cbDispatchLog = new Map<string, number[]>();
+
+function circuitBreakerAllow(
+  sourceGroup: string,
+  targetFolder: string,
+): boolean {
+  const key = sourceGroup + '|' + targetFolder;
+  const now = Date.now();
+  const cutoff = now - CB_WINDOW_MS;
+  const timestamps = (cbDispatchLog.get(key) ?? []).filter((t) => t > cutoff);
+  if (timestamps.length >= CB_MAX_TASKS) {
+    return false; // tripped
+  }
+  timestamps.push(now);
+  cbDispatchLog.set(key, timestamps);
+  return true;
+}
 
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
@@ -244,6 +274,13 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For get_book
+    title?: string;
+    author?: string;
+    // For get_secret
+    reference?: string;
+    // For get_messages
+    limit?: number;
     // For document_task
     description?: string;
     force?: boolean;
@@ -281,10 +318,19 @@ export async function processTaskIpc(
 
         const targetFolder = targetGroupEntry.folder;
 
-        // Authorization: non-main groups can only schedule for themselves
-        if (!isMain && targetFolder !== sourceGroup) {
+        // Authorization: non-main groups can schedule for themselves or explicitly allowed targets
+        const sourceGroupEntry = Object.values(registeredGroups).find(
+          (g) => g.folder === sourceGroup,
+        );
+        const allowedTargetJids: string[] = (sourceGroupEntry?.containerConfig
+          ?.allowedTargetGroups ?? []) as string[];
+        if (
+          !isMain &&
+          targetFolder !== sourceGroup &&
+          !allowedTargetJids.includes(targetJid)
+        ) {
           logger.warn(
-            { sourceGroup, targetFolder },
+            { sourceGroup, targetFolder, allowedTargetJids },
             'Unauthorized schedule_task attempt blocked',
           );
           break;
@@ -326,6 +372,37 @@ export async function processTaskIpc(
             break;
           }
           nextRun = date.toISOString();
+        }
+
+        // Circuit breaker: block if dispatch rate limit exceeded
+        if (!circuitBreakerAllow(sourceGroup, targetFolder)) {
+          logger.warn(
+            {
+              sourceGroup,
+              targetFolder,
+              windowMs: CB_WINDOW_MS,
+              maxTasks: CB_MAX_TASKS,
+            },
+            'Circuit breaker tripped: dispatch rate limit exceeded, task blocked',
+          );
+          const mainEntry = Object.entries(registeredGroups).find(
+            ([, g]) => g.isMain,
+          );
+          if (mainEntry) {
+            await deps.sendMessage(
+              mainEntry[0],
+              'Circuit breaker: ' +
+                sourceGroup +
+                ' dispatched >' +
+                CB_MAX_TASKS +
+                ' tasks to ' +
+                targetFolder +
+                ' within ' +
+                CB_WINDOW_MS / 60000 +
+                ' min. Task blocked. Possible runaway loop.',
+            );
+          }
+          break;
         }
 
         const taskId =
@@ -567,6 +644,295 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'get_book':
+      if (data.title && data.requestId) {
+        const responseDir = path.join(
+          resolveGroupIpcPath(sourceGroup),
+          'responses',
+        );
+        fs.mkdirSync(responseDir, { recursive: true });
+        const responseFile = path.join(responseDir, data.requestId + '.json');
+        const title = String(data.title);
+        const author = data.author ? String(data.author) : '';
+        logger.info({ title, author, sourceGroup }, 'Running BookDrop');
+        import('child_process').then(({ execFile }) => {
+          const remoteArgs = ['python3', '/root/bookdrop/bookdrop.py', title];
+          if (author) remoteArgs.push(author);
+          const remoteCmd = remoteArgs.map(shellQuote).join(' ');
+          execFile(
+            'ssh',
+            [
+              '-o',
+              'BatchMode=yes',
+              '-o',
+              'ConnectTimeout=10',
+              '-o',
+              'StrictHostKeyChecking=no',
+              'root@100.112.19.152',
+              remoteCmd,
+            ],
+            { timeout: BOOKDROP_TIMEOUT_MS },
+            (err, stdout, stderr) => {
+              if (err) {
+                fs.writeFileSync(
+                  responseFile,
+                  JSON.stringify({
+                    error: describeBookDropFailure(err, stdout, stderr),
+                  }),
+                );
+              } else {
+                fs.writeFileSync(
+                  responseFile,
+                  JSON.stringify({
+                    output: stdout.trim() || 'Book sent to Kindle.',
+                  }),
+                );
+              }
+            },
+          );
+        });
+      } else {
+        logger.warn({ data }, 'Invalid get_book request - missing fields');
+      }
+      break;
+    case 'get_messages': {
+      if (!data.requestId) {
+        logger.warn(
+          { data },
+          'Invalid get_messages request - missing requestId',
+        );
+        break;
+      }
+      const responseDir = path.join(
+        resolveGroupIpcPath(sourceGroup),
+        'responses',
+      );
+      fs.mkdirSync(responseDir, { recursive: true });
+      const responseFile = path.join(responseDir, `${data.requestId}.json`);
+
+      // Hierarchy auth: main reads all; others read self + explicit reports
+      // (reports = the allowedTargetGroups set they can also schedule tasks for).
+      const sourceGroupEntry = Object.values(registeredGroups).find(
+        (g) => g.folder === sourceGroup,
+      );
+      const allowedTargetJids: string[] = (sourceGroupEntry?.containerConfig
+        ?.allowedTargetGroups ?? []) as string[];
+      const readableFolders = new Set<string>([sourceGroup]);
+      for (const jid of allowedTargetJids) {
+        const g = registeredGroups[jid];
+        if (g) readableFolders.add(g.folder);
+      }
+      const requestedFolder = String(data.folder || '');
+      if (!isMain && requestedFolder === '') {
+        fs.writeFileSync(
+          responseFile,
+          JSON.stringify({
+            error:
+              'Cross-group read not permitted; specify a folder you can read',
+          }),
+        );
+        break;
+      }
+      if (!isMain && !readableFolders.has(requestedFolder)) {
+        logger.warn(
+          { sourceGroup, requestedFolder, readable: [...readableFolders] },
+          'Unauthorized get_messages attempt blocked',
+        );
+        fs.writeFileSync(
+          responseFile,
+          JSON.stringify({
+            error: `Not authorized to read "${requestedFolder}"`,
+          }),
+        );
+        break;
+      }
+
+      try {
+        const { execFile } = await import('child_process');
+        const folder = requestedFolder;
+        const limit = Math.min(
+          parseInt(String(data.limit || '20'), 10) || 20,
+          200,
+        );
+        const dbPath = path.join(process.cwd(), 'store', 'messages.db');
+        const sql = folder
+          ? `SELECT m.timestamp, COALESCE(m.sender_name, m.sender) AS sender, m.content, m.is_from_me
+             FROM messages m
+             JOIN registered_groups rg ON m.chat_jid = rg.jid
+             WHERE rg.folder = '${folder.replace(/'/g, "''")}'
+             ORDER BY m.timestamp DESC LIMIT ${limit};`
+          : `SELECT rg.folder, rg.name, m.timestamp, COALESCE(m.sender_name, m.sender) AS sender, m.content, m.is_from_me
+             FROM messages m
+             JOIN registered_groups rg ON m.chat_jid = rg.jid
+             ORDER BY m.timestamp DESC LIMIT ${limit};`;
+        execFile(
+          'sqlite3',
+          ['-json', dbPath, sql],
+          { timeout: 10000 },
+          (err, stdout, stderr) => {
+            if (err) {
+              fs.writeFileSync(
+                responseFile,
+                JSON.stringify({ error: stderr?.trim() || err.message }),
+              );
+            } else {
+              try {
+                const rows = JSON.parse(stdout || '[]');
+                // Sanitize lone surrogates to prevent API JSON errors
+                const sanitized = rows.map((r: Record<string, unknown>) => ({
+                  ...r,
+                  content:
+                    typeof r.content === 'string'
+                      ? r.content.toWellFormed()
+                      : r.content,
+                }));
+                fs.writeFileSync(
+                  responseFile,
+                  JSON.stringify({
+                    messages: sanitized,
+                    folder,
+                    count: sanitized.length,
+                  }),
+                );
+              } catch {
+                fs.writeFileSync(
+                  responseFile,
+                  JSON.stringify({
+                    error: 'Failed to parse sqlite output',
+                    raw: stdout.slice(0, 500),
+                  }),
+                );
+              }
+            }
+          },
+        );
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        const responseFile2 = path.join(
+          resolveGroupIpcPath(sourceGroup),
+          'responses',
+          `${data.requestId}.json`,
+        );
+        fs.writeFileSync(responseFile2, JSON.stringify({ error: errMsg }));
+      }
+      break;
+    }
+    case 'get_secret': {
+      if (!data.reference || !data.requestId) {
+        logger.warn({ data }, 'Invalid get_secret request - missing fields');
+        break;
+      }
+      const responseDir = path.join(
+        resolveGroupIpcPath(sourceGroup),
+        'responses',
+      );
+      fs.mkdirSync(responseDir, { recursive: true });
+      const responseFile = path.join(responseDir, `${data.requestId}.json`);
+      try {
+        const { readEnvFile } = await import('./env.js');
+        const env = readEnvFile(['OP_SERVICE_ACCOUNT_TOKEN']);
+        const opToken = env['OP_SERVICE_ACCOUNT_TOKEN'];
+        if (!opToken) {
+          fs.writeFileSync(
+            responseFile,
+            JSON.stringify({
+              error: 'OP_SERVICE_ACCOUNT_TOKEN not configured',
+            }),
+          );
+          break;
+        }
+        const { execFile } = await import('child_process');
+        const reference = String(data.reference);
+        logger.info(
+          { reference, sourceGroup },
+          'Fetching secret from 1Password',
+        );
+        const opEnv = { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: opToken };
+
+        // Helper: fuzzy-search vault for candidates matching a term
+        const findCandidates = (
+          vault: string,
+          term: string,
+        ): Promise<object[]> => {
+          return new Promise((resolve) => {
+            execFile(
+              '/opt/homebrew/bin/op',
+              ['item', 'list', '--vault', vault, '--format', 'json'],
+              { env: opEnv, timeout: 15000 },
+              (e, out) => {
+                if (e || !out) return resolve([]);
+                try {
+                  const items: Array<{
+                    title: string;
+                    updated_at?: string;
+                    fields?: Array<{ label: string; value: string }>;
+                  }> = JSON.parse(out);
+                  const lower = term.toLowerCase();
+                  const matches = items.filter((i) =>
+                    i.title.toLowerCase().includes(lower),
+                  );
+                  resolve(
+                    matches.map((i) => {
+                      const usernameField = (i.fields || []).find(
+                        (f: { label: string; value: string }) =>
+                          f.label === 'username',
+                      );
+                      return {
+                        title: i.title,
+                        username: usernameField?.value ?? null,
+                        updated_at: i.updated_at ?? null,
+                        suggested_reference: `op://${vault}/${i.title}/password`,
+                      };
+                    }),
+                  );
+                } catch {
+                  resolve([]);
+                }
+              },
+            );
+          });
+        };
+
+        execFile(
+          '/opt/homebrew/bin/op',
+          ['read', reference],
+          { env: opEnv, timeout: 15000 },
+          async (err, stdout, stderr) => {
+            if (err || !stdout.trim()) {
+              logger.error(
+                { reference, error: stderr || err?.message },
+                '1Password op read failed — attempting fuzzy fallback',
+              );
+              // Parse vault and item name from reference: op://Vault/Item/field
+              const parts = reference.replace(/^op:\/\//, '').split('/');
+              const vault = parts[0] ?? 'Homelab Agents';
+              const itemTerm = parts[1] ?? reference;
+              const candidates = await findCandidates(vault, itemTerm);
+              fs.writeFileSync(
+                responseFile,
+                JSON.stringify({
+                  error: stderr?.trim() || err?.message || 'empty result',
+                  candidates: candidates.length > 0 ? candidates : undefined,
+                  hint:
+                    candidates.length > 0
+                      ? `No exact match for "${itemTerm}". ${candidates.length} candidate(s) found — retry with suggested_reference.`
+                      : `No items in vault "${vault}" match "${itemTerm}".`,
+                }),
+              );
+            } else {
+              fs.writeFileSync(
+                responseFile,
+                JSON.stringify({ output: stdout.trim() }),
+              );
+            }
+          },
+        );
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        fs.writeFileSync(responseFile, JSON.stringify({ error: errMsg }));
+      }
+      break;
+    }
     case 'restart_nanoclaw':
       // Safe restart: uses process.exit so launchd restarts us cleanly.
       // No SSH, no SIGTERM race conditions.

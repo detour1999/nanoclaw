@@ -55,3 +55,11 @@ When running on a schedule (not responding to something Dylan said), *default to
 - Wrap your entire response in `<internal>` tags if there is nothing actionable for Dylan
 - Only surface something to the chat (via `send_message` or unwrapped output) when Dylan genuinely needs to act: a new PR, an error, a session expiry, a finding worth his attention
 - Status chatter like "nothing new", "already synced", "no changes" stays `<internal>` always
+
+## Sharing Documents
+
+When sharing any document or file with Dylan, never send raw markdown — he can't read .md files on his phone. Always either:
+- Create a PR (preferred for blog posts, code, anything going into a repo)
+- Convert to PDF and send via send_file (for standalone documents, reports, drafts)
+
+No exceptions. Raw markdown files are invisible to him.

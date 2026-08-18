@@ -3,7 +3,11 @@ import { formatLocalTime } from './timezone.js';
 
 export function escapeXml(s: string): string {
   if (!s) return '';
+  // toWellFormed() replaces lone Unicode surrogates (e.g. malformed emoji from
+  // WhatsApp) with U+FFFD before serializing to JSON, preventing the
+  // API error: "no low surrogate in string".
   return s
+    .toWellFormed()
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -25,7 +29,10 @@ export function formatMessages(
 }
 
 export function stripInternalTags(text: string): string {
-  return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+  return text
+    .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+    .replace(/<\/?internal>/g, '')
+    .trim();
 }
 
 export function formatOutbound(rawText: string): string {

@@ -27,11 +27,34 @@ export interface AllowedRoot {
   description?: string;
 }
 
+export type McpServerConfig =
+  | {
+      type: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    }
+  | { type: 'sse'; url: string; headers?: Record<string, string> }
+  | { type: 'http'; url: string; headers?: Record<string, string> };
+
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
   passHostEnv?: string[]; // Host env var names to forward into the container (values never stored)
   hostAccess?: boolean; // Grants ssh_localhost and restart_nanoclaw tools (default: false, always true for isMain)
+  allowedTargetGroups?: string[]; // JIDs of groups this non-main container can schedule tasks for
+  // Per-group MCP servers merged into the agent-runner's SDK config.
+  // Any string value may embed ${op:Vault/Item/field} — resolved via 1Password
+  // on the host at spawn time so raw secrets never enter the container config.
+  mcpServers?: Record<string, McpServerConfig>;
+  // Extra DNS servers passed to `--dns` at spawn. Useful for groups that need
+  // to resolve LAN names via a private resolver reachable over Tailscale.
+  dnsServers?: string[];
+  // Host-side TCP relays. Apple Container's NAT can't reach Tailscale-routed
+  // subnets, so hosts on those subnets must be proxied through the host mac.
+  // The host binds `listen` on the container gateway interface and forwards
+  // to `target` (host:port), reachable from the host's own networking stack.
+  hostRelays?: Array<{ listen: number; target: string }>;
 }
 
 export interface RegisteredGroup {

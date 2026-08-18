@@ -28,6 +28,7 @@ import {
 import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { readEnvFile } from './env.js';
+import { resolveOpRefs } from './op-refs.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -43,6 +44,8 @@ export interface ContainerInput {
   hostAccess?: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  // Per-group MCP servers with any ${op:...} refs already resolved by the host.
+  mcpServers?: Record<string, unknown>;
 }
 
 export interface ContainerOutput {
@@ -218,8 +221,13 @@ function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   extraEnv?: Record<string, string>,
+  dnsServers?: string[],
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  for (const dns of dnsServers ?? []) {
+    args.push('--dns', dns);
+  }
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
@@ -307,10 +315,44 @@ export async function runContainerAgent(
     }
   }
 
+  // Resolve per-group MCP servers (with any ${op:...} refs) on the host so
+  // raw secrets are injected into containerInput just before spawn and never
+  // land in the DB or a mounted file.
+  const mcpServers = group.containerConfig?.mcpServers;
+  let resolvedMcpServers: Record<string, unknown> | undefined;
+  logger.info(
+    {
+      group: group.folder,
+      mcpServerNames: mcpServers ? Object.keys(mcpServers) : [],
+    },
+    'DIAG: mcpServers pre-resolve',
+  );
+  if (mcpServers && Object.keys(mcpServers).length > 0) {
+    try {
+      resolvedMcpServers = await resolveOpRefs(mcpServers);
+      logger.info(
+        {
+          group: group.folder,
+          resolvedNames: Object.keys(resolvedMcpServers ?? {}),
+        },
+        'DIAG: mcpServers post-resolve OK',
+      );
+    } catch (err) {
+      logger.warn(
+        { group: group.folder, err: err instanceof Error ? err.message : err },
+        'Failed to resolve MCP server secrets — spawning without those MCP servers',
+      );
+    }
+  }
+  const resolvedInput: ContainerInput = resolvedMcpServers
+    ? { ...input, mcpServers: resolvedMcpServers }
+    : input;
+
   const containerArgs = buildContainerArgs(
     mounts,
     containerName,
     Object.keys(extraEnv).length ? extraEnv : undefined,
+    group.containerConfig?.dnsServers,
   );
 
   logger.debug(
@@ -351,7 +393,7 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    container.stdin.write(JSON.stringify(input));
+    container.stdin.write(JSON.stringify(resolvedInput));
     container.stdin.end();
 
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
@@ -698,7 +740,14 @@ export function writeTasksSnapshot(
     : tasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+  const normalizedTasks = filteredTasks.map((t) => ({
+    ...t,
+    // Coerce prompt to string — SQLite may return Buffer for BLOB columns
+    prompt: Buffer.isBuffer(t.prompt)
+      ? (t.prompt as Buffer).toString('utf-8')
+      : String(t.prompt),
+  }));
+  fs.writeFileSync(tasksFile, JSON.stringify(normalizedTasks, null, 2));
 }
 
 export interface AvailableGroup {
@@ -718,12 +767,15 @@ export function writeGroupsSnapshot(
   isMain: boolean,
   groups: AvailableGroup[],
   registeredJids: Set<string>,
+  allowedTargetJids: string[] = [],
 ): void {
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
-  // Main sees all groups; others see nothing (they can't activate groups)
-  const visibleGroups = isMain ? groups : [];
+  // Main sees all groups; non-main sees only explicitly allowed target groups
+  const visibleGroups = isMain
+    ? groups
+    : groups.filter((g) => allowedTargetJids.includes(g.jid));
 
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
   fs.writeFileSync(

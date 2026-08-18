@@ -10,6 +10,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
+import { truncateChars } from './text.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -91,7 +92,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
     schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
     context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
-    target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
+    target_group_jid: z.string().optional().describe('JID of the group to schedule the task for. Defaults to the current group.'),
   },
   async (args) => {
     // Validate schedule_value before writing IPC
@@ -128,8 +129,8 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       }
     }
 
-    // Non-main groups can only schedule for themselves
-    const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+    // Use target_group_jid if provided (IPC layer enforces auth for non-main groups)
+    const targetJid = args.target_group_jid ?? chatJid;
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -178,7 +179,7 @@ server.tool(
       const formatted = tasks
         .map(
           (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
-            `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
+            `- [${t.id}] ${truncateChars(t.prompt, 50)} (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
         )
         .join('\n');
 
@@ -351,6 +352,149 @@ server.tool(
     }
 
     return { content: [{ type: 'text' as const, text: 'SSH command timed out after 30s' }], isError: true };
+  },
+);
+
+
+server.tool(
+  'get_book',
+  'Add a book to your Kindle via BookDrop. Searches for the book, downloads it, and emails it to your Kindle. Takes a few minutes. Use this when asked to send a book to Kindle.',
+  {
+    title: z.string().describe('Book title to search for'),
+    author: z.string().optional().describe('Author name (optional, improves search accuracy)'),
+  },
+  async (args) => {
+    const requestId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const responsesDir = path.join(IPC_DIR, 'responses');
+    fs.mkdirSync(responsesDir, { recursive: true });
+    const responseFile = path.join(responsesDir, requestId + '.json');
+
+    const data = {
+      type: 'get_book',
+      requestId,
+      title: args.title,
+      author: args.author,
+      chatJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    // Poll for a response, but don't hold the turn open for BookDrop's full
+    // 30-minute worst case — the host keeps running it after we stop waiting.
+    const timeout = 300000;
+    const interval = 2000;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, interval));
+      if (fs.existsSync(responseFile)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          if (result.error) {
+            return { content: [{ type: 'text' as const, text: 'BookDrop error: ' + result.error }], isError: true };
+          }
+          return { content: [{ type: 'text' as const, text: result.output }] };
+        } catch {
+          fs.unlinkSync(responseFile);
+          return { content: [{ type: 'text' as const, text: 'Failed to parse BookDrop response' }], isError: true };
+        }
+      }
+    }
+
+    // Not an error: BookDrop is still running on Proxmox and will finish on its
+    // own. Reporting this as a failure led agents to conclude SSH was broken.
+    return {
+      content: [{
+        type: 'text' as const,
+        text: "BookDrop is still running on Proxmox after 5 minutes — this is normal for a book that has to be downloaded first. It keeps running in the background and the book will arrive at the Kindle when it finishes (up to 30 min). Don't retry, and don't report this as an SSH failure.",
+      }],
+    };
+  },
+);
+
+
+server.tool(
+  'get_messages',
+  `Read recent conversation messages from a group by folder name. You can read your own group and any group that reports to you (main reads all). Leave folder empty to read across all groups (main only). Returns messages in reverse-chronological order.`,
+  {
+    folder: z.string().describe('Group folder name to read from (e.g. "rando", "jo", "hans", "mo", "reed"). Leave empty to get recent messages across all groups.'),
+    limit: z.number().optional().describe('Number of messages to return (default 20, max 200)'),
+  },
+  async (args) => {
+    const requestId = `get_messages_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const taskPath = `/workspace/ipc/tasks/${requestId}.json`;
+    const responsePath = `/workspace/ipc/responses/${requestId}.json`;
+    const fs = await import('fs');
+    fs.writeFileSync(taskPath, JSON.stringify({ type: 'get_messages', folder: args.folder || '', limit: args.limit || 20, requestId }));
+    const start = Date.now();
+    while (Date.now() - start < 15000) {
+      await new Promise(r => setTimeout(r, 300));
+      if (fs.existsSync(responsePath)) {
+        const result = JSON.parse(fs.readFileSync(responsePath, 'utf8'));
+        fs.unlinkSync(responsePath);
+        if (result.error) return { content: [{ type: 'text' as const, text: `Error: ${result.error}` }], isError: true };
+        const msgs = (result.messages || []).reverse();
+        const lines = msgs.map((m: {timestamp: string; sender: string; is_from_me: number; content: string; folder?: string}) =>
+          `[${m.timestamp}] ${m.is_from_me ? '(bot)' : m.sender}: ${m.content}`
+        );
+        return { content: [{ type: 'text' as const, text: `${result.count} messages from "${result.folder || 'all'}":
+
+${lines.join('\n')}` }] };
+      }
+    }
+    return { content: [{ type: 'text' as const, text: 'get_messages timed out' }], isError: true };
+  },
+);
+
+server.tool(
+  'get_secret',
+  'Retrieve a secret from 1Password by reference URI. Reference format: op://VaultName/ItemName/FieldName (e.g. op://Homelab Agents/Proxmox/password). Returns the secret value as a string. If the reference fails or the item name is ambiguous, returns an error with a `candidates` array of fuzzy matches including their titles, usernames, updated_at timestamps, and suggested_reference paths — retry with the correct suggested_reference.',
+  {
+    reference: z.string().describe('1Password reference URI, e.g. op://Homelab Agents/Proxmox/password'),
+  },
+  async (args) => {
+    const requestId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const responsesDir = path.join(IPC_DIR, 'responses');
+    fs.mkdirSync(responsesDir, { recursive: true });
+    const responseFile = path.join(responsesDir, requestId + '.json');
+
+    const data = {
+      type: 'get_secret',
+      requestId,
+      reference: args.reference,
+      chatJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    // Poll for response
+    const timeout = 15000;
+    const interval = 500;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, interval));
+      if (fs.existsSync(responseFile)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          if (result.error) {
+            return { content: [{ type: 'text' as const, text: '1Password error: ' + result.error }], isError: true };
+          }
+          return { content: [{ type: 'text' as const, text: result.output }] };
+        } catch {
+          fs.unlinkSync(responseFile);
+          return { content: [{ type: 'text' as const, text: 'Failed to parse 1Password response' }], isError: true };
+        }
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'get_secret timed out' }], isError: true };
   },
 );
 

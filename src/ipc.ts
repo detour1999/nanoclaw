@@ -11,7 +11,8 @@ import {
   REPO_ROOT,
   TIMEZONE,
 } from './config.js';
-import { executeSSHLocalhost } from './ssh-helper.js';
+import { executeSSHLocalhost, shellQuote } from './ssh-helper.js';
+import { BOOKDROP_TIMEOUT_MS, describeBookDropFailure } from './bookdrop.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder, resolveGroupIpcPath } from './group-folder.js';
@@ -655,7 +656,6 @@ export async function processTaskIpc(
         const author = data.author ? String(data.author) : '';
         logger.info({ title, author, sourceGroup }, 'Running BookDrop');
         import('child_process').then(({ execFile }) => {
-          const shellQuote = (s: string) => "'" + s.replace(/'/g, "'\''") + "'";
           const remoteArgs = ['python3', '/root/bookdrop/bookdrop.py', title];
           if (author) remoteArgs.push(author);
           const remoteCmd = remoteArgs.map(shellQuote).join(' ');
@@ -671,12 +671,14 @@ export async function processTaskIpc(
               'root@100.112.19.152',
               remoteCmd,
             ],
-            { timeout: 300000 },
+            { timeout: BOOKDROP_TIMEOUT_MS },
             (err, stdout, stderr) => {
               if (err) {
                 fs.writeFileSync(
                   responseFile,
-                  JSON.stringify({ error: stderr || err.message }),
+                  JSON.stringify({
+                    error: describeBookDropFailure(err, stdout, stderr),
+                  }),
                 );
               } else {
                 fs.writeFileSync(

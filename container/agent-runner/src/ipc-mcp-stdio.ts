@@ -660,6 +660,55 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   },
 );
 
+
+server.tool(
+  'check_kindle_library',
+  'Check if a book has been sent to Kindle. Returns delivery history for a title, or the last 10 sends if query is empty or \*\.',
+  {
+    query: z.string().describe('Book title to search for. Pass empty string or \*\ to list the last 10 sends.'),
+  },
+  async (args) => {
+    const requestId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const responsesDir = path.join(IPC_DIR, 'responses');
+    fs.mkdirSync(responsesDir, { recursive: true });
+    const responseFile = path.join(responsesDir, requestId + '.json');
+
+    const data = {
+      type: 'check_kindle_library',
+      requestId,
+      query: args.query,
+      chatJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const timeout = 15000;
+    const interval = 500;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, interval));
+      if (fs.existsSync(responseFile)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          if (result.error) {
+            return { content: [{ type: 'text' as const, text: 'Error: ' + result.error }], isError: true };
+          }
+          return { content: [{ type: 'text' as const, text: result.output }] };
+        } catch {
+          fs.unlinkSync(responseFile);
+          return { content: [{ type: 'text' as const, text: 'Failed to parse response' }], isError: true };
+        }
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'check_kindle_library timed out' }], isError: true };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

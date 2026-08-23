@@ -707,7 +707,10 @@ export async function processTaskIpc(
       break;
     case 'check_kindle_library':
       if (data.requestId !== undefined) {
-        const responseDir = path.join(resolveGroupIpcPath(sourceGroup), 'responses');
+        const responseDir = path.join(
+          resolveGroupIpcPath(sourceGroup),
+          'responses',
+        );
         fs.mkdirSync(responseDir, { recursive: true });
         const responseFile = path.join(responseDir, data.requestId + '.json');
         const query = data.query ? String(data.query) : '';
@@ -715,18 +718,32 @@ export async function processTaskIpc(
         import('child_process').then(({ execFile }) => {
           execFile(
             'ssh',
-            ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10',
-             'root@100.112.19.152',
-             'cat /root/bookdrop/delivery-log.json 2>/dev/null || echo "[]"'],
+            [
+              '-o',
+              'BatchMode=yes',
+              '-o',
+              'StrictHostKeyChecking=no',
+              '-o',
+              'ConnectTimeout=10',
+              'root@100.112.19.152',
+              'cat /root/bookdrop/delivery-log.json 2>/dev/null || echo "[]"',
+            ],
             { timeout: 15000 },
             (err, stdout, stderr) => {
               if (err) {
-                fs.writeFileSync(responseFile, JSON.stringify({ error: stderr.trim() || err.message }));
+                fs.writeFileSync(
+                  responseFile,
+                  JSON.stringify({ error: stderr.trim() || err.message }),
+                );
                 return;
               }
               try {
-                const log: Array<{title: string; author: string; sent_at: string; file: string}> =
-                  JSON.parse(stdout.trim() || '[]');
+                const log: Array<{
+                  title: string;
+                  author: string;
+                  sent_at: string;
+                  file: string;
+                }> = JSON.parse(stdout.trim() || '[]');
                 const q = query.trim().toLowerCase();
                 let output: string;
                 if (!q || q === '*') {
@@ -734,32 +751,59 @@ export async function processTaskIpc(
                   if (recent.length === 0) {
                     output = 'No books in Kindle delivery log yet.';
                   } else {
-                    const lines = recent.map(e =>
-                      '\u2022 ' + e.title + (e.author ? ' by ' + e.author : '') + ' \u2014 ' + e.sent_at.slice(0, 10)
+                    const lines = recent.map(
+                      (e) =>
+                        '\u2022 ' +
+                        e.title +
+                        (e.author ? ' by ' + e.author : '') +
+                        ' \u2014 ' +
+                        e.sent_at.slice(0, 10),
                     );
-                    output = 'Last ' + recent.length + ' sends:\n' + lines.join('\n');
+                    output =
+                      'Last ' + recent.length + ' sends:\n' + lines.join('\n');
                   }
                 } else {
-                  const matches = log.filter(e => e.title.toLowerCase().includes(q));
+                  const matches = log.filter((e) =>
+                    e.title.toLowerCase().includes(q),
+                  );
                   if (matches.length === 0) {
                     output = query + ' not found in Kindle delivery log.';
                   } else {
-                    const lines = matches.map(e =>
-                      '\u2022 ' + e.title + (e.author ? ' by ' + e.author : '') +
-                      ' \u2014 sent ' + e.sent_at.slice(0, 10) + ' (' + e.file + ')'
+                    const lines = matches.map(
+                      (e) =>
+                        '\u2022 ' +
+                        e.title +
+                        (e.author ? ' by ' + e.author : '') +
+                        ' \u2014 sent ' +
+                        e.sent_at.slice(0, 10) +
+                        ' (' +
+                        e.file +
+                        ')',
                     );
-                    output = 'Found ' + matches.length + ' match(es):\n' + lines.join('\n');
+                    output =
+                      'Found ' +
+                      matches.length +
+                      ' match(es):\n' +
+                      lines.join('\n');
                   }
                 }
                 fs.writeFileSync(responseFile, JSON.stringify({ output }));
               } catch (parseErr) {
-                fs.writeFileSync(responseFile, JSON.stringify({ error: 'Failed to parse delivery log: ' + String(parseErr) }));
+                fs.writeFileSync(
+                  responseFile,
+                  JSON.stringify({
+                    error: 'Failed to parse delivery log: ' + String(parseErr),
+                  }),
+                );
               }
             },
           );
         });
       } else {
-        logger.warn({ data }, 'Invalid check_kindle_library request - missing requestId');
+        logger.warn(
+          { data },
+          'Invalid check_kindle_library request - missing requestId',
+        );
       }
       break;
     case 'get_messages': {

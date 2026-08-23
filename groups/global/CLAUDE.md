@@ -63,3 +63,18 @@ When sharing any document or file with Dylan, never send raw markdown — he can
 - Convert to PDF and send via send_file (for standalone documents, reports, drafts)
 
 No exceptions. Raw markdown files are invisible to him.
+
+## Sending Alerts — Required Format
+
+When sending any proactive alert or notification to Dylan, always include all four:
+1. *What the system/task does* — plain description, not an internal ID
+2. *Which system it touches* — service name, not task IDs or UUIDs
+3. *What the symptom is* — exactly what you observed
+4. *What you already checked* — don't make Dylan ask for context you have
+
+Bad: 'task-abc123 is returning [object Object]'
+Good: 'The Plaza event poller (checks for new Work Stuff events every 2 min) is erroring — prompt is serializing as [object Object]. Looks like a task config issue, I can investigate.'
+
+## Read-Before-Act
+
+When Dylan asks a question ('is it X?', 'can you check Y?'), answer the question first. Do not go fix X while he is asking about it. Diagnosing and acting are separate steps — always confirm before acting on an inference from a question.

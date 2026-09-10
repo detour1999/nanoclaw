@@ -18,6 +18,7 @@ import {
   parseOpReference,
   pickSearchVaults,
   pickSecretField,
+  rankCandidateTitles,
   OpField,
   SecretCandidate,
 } from './op-secrets.js';
@@ -1039,10 +1040,16 @@ export async function processTaskIpc(
                     title: string;
                     updated_at?: string;
                   }> = JSON.parse(out);
-                  const lower = term.toLowerCase();
-                  const matches = items
-                    .filter((i) => i.title.toLowerCase().includes(lower))
-                    .slice(0, MAX_ENRICHED_CANDIDATES);
+                  // Rank by shared words: agents guess names loosely, and a
+                  // whole-term substring test misses "Homelab Anthropic Key"
+                  // for a search of "Anthropic API Key".
+                  const ranked = rankCandidateTitles(
+                    items.map((i) => i.title),
+                    term,
+                  ).slice(0, MAX_ENRICHED_CANDIDATES);
+                  const matches = ranked
+                    .map((t) => items.find((i) => i.title === t))
+                    .filter((i): i is (typeof items)[number] => Boolean(i));
                   resolve(
                     await Promise.all(
                       matches.map((i) =>

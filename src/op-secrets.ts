@@ -42,6 +42,79 @@ export function pickSearchVaults(
   return match ? [match] : accessibleVaults;
 }
 
+/**
+ * Words too common in credential titles to identify an item on their own.
+ * They still break ties — "Anthropic Key" should prefer "Homelab Anthropic
+ * Key" over "Anthropic Billing" — but a query made only of them matches
+ * nothing rather than everything.
+ */
+const NOISE_WORDS = new Set([
+  'the',
+  'a',
+  'an',
+  'my',
+  'api',
+  'key',
+  'keys',
+  'token',
+  'password',
+  'secret',
+  'credential',
+  'credentials',
+  'account',
+  'login',
+  'user',
+  'username',
+]);
+
+const MAX_CANDIDATES = 5;
+
+function words(s: string): string[] {
+  return s
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Rank vault item titles against a search term, closest first.
+ *
+ * Substring matching on the whole term is too strict for how agents guess
+ * names: a search for "Anthropic API Key" never matches the item actually
+ * called "Homelab Anthropic Key", so the fallback reported nothing and the
+ * agent gave up. Matching on shared words finds it.
+ */
+export function rankCandidateTitles(titles: string[], term: string): string[] {
+  const termWords = words(term);
+  const significant = termWords.filter((w) => !NOISE_WORDS.has(w));
+  if (significant.length === 0) return [];
+
+  const normalizedTerm = termWords.join(' ');
+
+  return titles
+    .map((title) => {
+      const titleWords = new Set(words(title));
+      const hits = significant.filter((w) => titleWords.has(w)).length;
+      if (hits === 0) return { title, score: 0 };
+      const noiseHits = termWords.filter(
+        (w) => NOISE_WORDS.has(w) && titleWords.has(w),
+      ).length;
+      const substringBonus = words(title).join(' ').includes(normalizedTerm)
+        ? 5
+        : 0;
+      return { title, score: hits * 2 + noiseHits + substringBonus };
+    })
+    .filter((c) => c.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.title.length - b.title.length ||
+        a.title.localeCompare(b.title),
+    )
+    .slice(0, MAX_CANDIDATES)
+    .map((c) => c.title);
+}
+
 export interface OpField {
   label: string;
   type: string;

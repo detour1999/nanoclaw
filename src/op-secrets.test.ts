@@ -7,6 +7,7 @@ import {
   pickSearchVaults,
   buildSecretHint,
   pickSecretField,
+  rankCandidateTitles,
 } from './op-secrets.js';
 
 describe('parseOpReference', () => {
@@ -147,5 +148,60 @@ describe('pickSecretField', () => {
 
   it('handles an empty field list', () => {
     expect(pickSecretField([])).toBe('password');
+  });
+});
+
+describe('rankCandidateTitles', () => {
+  const VAULT = [
+    'Homelab Anthropic Key',
+    'Proxmox',
+    'Synology Home Remote',
+    'Netlify ',
+    'readarr',
+  ];
+
+  it('finds an item when the query words are reordered or padded', () => {
+    // Hal asked for "Anthropic API Key"; the item is "Homelab Anthropic Key".
+    // A whole-string substring test finds nothing, which is what left him stuck.
+    expect(rankCandidateTitles(VAULT, 'Anthropic API Key')).toContain(
+      'Homelab Anthropic Key',
+    );
+  });
+
+  it('still matches a plain substring query', () => {
+    expect(rankCandidateTitles(VAULT, 'Netlify')).toEqual(['Netlify ']);
+  });
+
+  it('is case- and whitespace-insensitive', () => {
+    expect(rankCandidateTitles(VAULT, '  netlify  ')).toEqual(['Netlify ']);
+  });
+
+  it('ranks the closest title first', () => {
+    const ranked = rankCandidateTitles(
+      ['Anthropic Billing', 'Homelab Anthropic Key'],
+      'Anthropic Key',
+    );
+    expect(ranked[0]).toBe('Homelab Anthropic Key');
+  });
+
+  it('returns nothing when no meaningful word overlaps', () => {
+    expect(rankCandidateTitles(VAULT, 'Cloudflare')).toEqual([]);
+  });
+
+  it('ignores noise words so they cannot match everything', () => {
+    // "key"/"api" are common; a query of only noise should not match all items.
+    expect(rankCandidateTitles(VAULT, 'the')).toEqual([]);
+  });
+
+  it('caps how many candidates it returns', () => {
+    const many = Array.from({ length: 40 }, (_, i) => `Anthropic ${i}`);
+    expect(rankCandidateTitles(many, 'Anthropic').length).toBeLessThanOrEqual(
+      5,
+    );
+  });
+
+  it('handles an empty query and an empty vault', () => {
+    expect(rankCandidateTitles(VAULT, '')).toEqual([]);
+    expect(rankCandidateTitles([], 'Anthropic')).toEqual([]);
   });
 });

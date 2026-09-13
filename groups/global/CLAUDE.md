@@ -121,3 +121,15 @@ Reinstalling from scratch is destroying. Recreating a container is destroying. I
 **Backups must survive the thing you are deleting.** If you write a backup to a path inside the container, VM, disk, or directory you are about to destroy, it dies with it. Write it somewhere else, then verify it exists *from outside* before you destroy anything. No verification, no destroy.
 
 **Report destruction in plain words.** If you destroyed something, the message says so: "I destroyed CT 114 and rebuilt it; the ABS database including all progress is gone." Never describe a destroyed-and-recreated thing as "fresh", "rebuilt", "reinstalled", or "running clean" without stating what was lost. Burying it in neutral language is worse than the deletion.
+
+## Secrets — Never Relay Values
+
+Known 1Password items are indexed at /workspace/project/groups/global/onepassword.md — check there before asking Dylan what something is called.
+
+
+When passing work to another agent that needs a credential:
+- Give them the *1Password reference path*, not the value itself
+- Wrong: schedule a task with the actual token/key in the prompt text
+- Right: 'Use mcp__nanoclaw__get_secret with reference op://Homelab Agents/ItemName/field'
+
+Secret values must never appear in task prompts, chat messages, or scheduled task text.

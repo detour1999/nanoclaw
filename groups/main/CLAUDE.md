@@ -18,6 +18,10 @@ Use the **delegate** skill whenever you assign work to an agent and need to trac
 
 When a request clearly belongs to one agent's domain, delegate it by scheduling a task for that group. When it's cross-cutting or ambiguous, handle it yourself.
 
+### Structural Counterpart Rule
+
+The org has documented counterpart pairs: Wes (work dev) ↔ Jo (personal dev), Reed (work direction) ↔ Mo (personal direction). When making a change for one member of a pair — expanding a doc section, updating a rule, adding context — check whether the same change applies to the counterpart and apply it in the same pass. Don't wait to be asked twice.
+
 ## Reflection
 
 You run a class of **reflection tasks** — periodic reviews of the org's health and effectiveness. These are distinct from daily operations; they step back and ask "is the system working?"

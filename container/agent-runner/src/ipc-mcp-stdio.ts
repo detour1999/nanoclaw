@@ -709,6 +709,65 @@ server.tool(
   },
 );
 
+server.tool(
+  'pct_deploy',
+  'Push a file and/or exec a command inside a Proxmox LXC container via pct push / pct exec. Provide file_content + remote_path to write a file, command to run something inside the container, or both. Requires host access.',
+  {
+    ctid: z.number().describe('Proxmox container ID (e.g. 114)'),
+    file_content: z.string().optional().describe('File content to push into the container'),
+    remote_path: z.string().optional().describe('Destination path inside the container (required when file_content is provided)'),
+    encoding: z.enum(['text', 'base64']).optional().describe('Encoding of file_content: text (default, UTF-8 string) or base64 (binary)'),
+    command: z.string().optional().describe('Shell command to exec inside the container as root via bash -c (runs after file push if both are given)'),
+  },
+  async (args) => {
+    if (!hasHostAccess) {
+      return { content: [{ type: 'text' as const, text: 'Error: pct_deploy requires host access privilege.' }], isError: true };
+    }
+    if (args.file_content && !args.remote_path) {
+      return { content: [{ type: 'text' as const, text: 'Error: remote_path is required when file_content is provided.' }], isError: true };
+    }
+    if (!args.file_content && !args.command) {
+      return { content: [{ type: 'text' as const, text: 'Error: provide file_content, command, or both.' }], isError: true };
+    }
+
+    const requestId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const responsesDir = path.join(IPC_DIR, 'responses');
+    fs.mkdirSync(responsesDir, { recursive: true });
+    const responseFile = path.join(responsesDir, requestId + '.json');
+
+    writeIpcFile(TASKS_DIR, {
+      type: 'pct_deploy',
+      requestId,
+      ctid: args.ctid,
+      file_content: args.file_content,
+      remote_path: args.remote_path,
+      encoding: args.encoding || 'text',
+      command: args.command,
+      chatJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 500));
+      if (fs.existsSync(responseFile)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          if (result.error) return { content: [{ type: 'text' as const, text: 'pct_deploy error: ' + result.error }], isError: true };
+          return { content: [{ type: 'text' as const, text: result.output }] };
+        } catch {
+          fs.unlinkSync(responseFile);
+          return { content: [{ type: 'text' as const, text: 'Failed to parse pct_deploy response' }], isError: true };
+        }
+      }
+    }
+    return { content: [{ type: 'text' as const, text: 'pct_deploy timed out after 60s' }], isError: true };
+  },
+);
+
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

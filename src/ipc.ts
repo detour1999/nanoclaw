@@ -1408,7 +1408,10 @@ export async function processTaskIpc(
         break;
       }
       if (data.file_content && !data.remote_path) {
-        logger.warn({ data }, 'pct_deploy missing remote_path for file_content');
+        logger.warn(
+          { data },
+          'pct_deploy missing remote_path for file_content',
+        );
         break;
       }
       if (!data.file_content && !data.command) {
@@ -1420,14 +1423,22 @@ export async function processTaskIpc(
         break;
       }
 
-      const responseDir = path.join(resolveGroupIpcPath(sourceGroup), 'responses');
+      const responseDir = path.join(
+        resolveGroupIpcPath(sourceGroup),
+        'responses',
+      );
       fs.mkdirSync(responseDir, { recursive: true });
       const responseFile = path.join(responseDir, data.requestId + '.json');
       const ctid = Number(data.ctid);
       const tmpFile = '/tmp/nc-deploy-' + data.requestId + '.tmp';
 
       logger.info(
-        { ctid, hasFile: !!data.file_content, hasCommand: !!data.command, sourceGroup },
+        {
+          ctid,
+          hasFile: !!data.file_content,
+          hasCommand: !!data.command,
+          sourceGroup,
+        },
         'Running pct_deploy',
       );
 
@@ -1440,18 +1451,39 @@ export async function processTaskIpc(
 
       import('child_process').then(({ spawn }) => {
         const sshHost = 'root@100.112.19.152';
-        const sshBaseArgs = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=no', sshHost];
+        const sshBaseArgs = [
+          '-o',
+          'BatchMode=yes',
+          '-o',
+          'ConnectTimeout=10',
+          '-o',
+          'StrictHostKeyChecking=no',
+          sshHost,
+        ];
 
-        const runSsh = (remoteCmd: string, stdinData?: string): Promise<string> =>
+        const runSsh = (
+          remoteCmd: string,
+          stdinData?: string,
+        ): Promise<string> =>
           new Promise((resolve, reject) => {
-            const proc = spawn('ssh', [...sshBaseArgs, remoteCmd], { timeout: 60000 });
+            const proc = spawn('ssh', [...sshBaseArgs, remoteCmd], {
+              timeout: 60000,
+            });
             let stdout = '';
             let stderr = '';
-            proc.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
-            proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+            proc.stdout.on('data', (d: Buffer) => {
+              stdout += d.toString();
+            });
+            proc.stderr.on('data', (d: Buffer) => {
+              stderr += d.toString();
+            });
             proc.on('close', (code: number | null) => {
-              if (code !== 0) reject(new Error('exit ' + code + ': ' + stderr.trim()));
-              else resolve([stdout.trim(), stderr.trim()].filter(Boolean).join('\n'));
+              if (code !== 0)
+                reject(new Error('exit ' + code + ': ' + stderr.trim()));
+              else
+                resolve(
+                  [stdout.trim(), stderr.trim()].filter(Boolean).join('\n'),
+                );
             });
             if (stdinData !== undefined) {
               proc.stdin.write(stdinData);
@@ -1463,27 +1495,42 @@ export async function processTaskIpc(
           const outputs: string[] = [];
 
           if (pctFileContent) {
-            const b64 = pctEncoding === 'base64'
-              ? pctFileContent
-              : Buffer.from(pctFileContent).toString('base64');
+            const b64 =
+              pctEncoding === 'base64'
+                ? pctFileContent
+                : Buffer.from(pctFileContent).toString('base64');
             const pushScript =
-              'cat | base64 -d > ' + shellQuote(pctTmpFile) +
-              ' && pct push ' + ctid + ' ' + shellQuote(pctTmpFile) + ' ' + shellQuote(pctRemotePath!) +
-              ' && rm -f ' + shellQuote(pctTmpFile);
+              'cat | base64 -d > ' +
+              shellQuote(pctTmpFile) +
+              ' && pct push ' +
+              ctid +
+              ' ' +
+              shellQuote(pctTmpFile) +
+              ' ' +
+              shellQuote(pctRemotePath!) +
+              ' && rm -f ' +
+              shellQuote(pctTmpFile);
             const out = await runSsh(pushScript, b64);
             if (out) outputs.push(out);
           }
 
           if (pctCommand) {
-            const execScript = 'pct exec ' + ctid + ' -- bash -c ' + shellQuote(pctCommand);
+            const execScript =
+              'pct exec ' + ctid + ' -- bash -c ' + shellQuote(pctCommand);
             const out = await runSsh(execScript);
             if (out) outputs.push(out);
           }
 
-          fs.writeFileSync(pctResponseFile, JSON.stringify({ output: outputs.join('\n') || 'Done.' }));
+          fs.writeFileSync(
+            pctResponseFile,
+            JSON.stringify({ output: outputs.join('\n') || 'Done.' }),
+          );
         })().catch((err: Error) => {
           runSsh('rm -f ' + shellQuote(pctTmpFile)).catch(() => {});
-          fs.writeFileSync(pctResponseFile, JSON.stringify({ error: String(err.message || err) }));
+          fs.writeFileSync(
+            pctResponseFile,
+            JSON.stringify({ error: String(err.message || err) }),
+          );
         });
       });
       break;

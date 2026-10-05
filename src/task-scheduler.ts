@@ -172,7 +172,9 @@ async function runTask(
     const output = await runContainerAgent(
       group,
       {
-        prompt: task.prompt,
+        prompt: Buffer.isBuffer(task.prompt as unknown)
+          ? (task.prompt as unknown as Buffer).toString('utf-8')
+          : String(task.prompt),
         sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,

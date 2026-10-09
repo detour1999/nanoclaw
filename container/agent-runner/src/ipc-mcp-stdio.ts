@@ -768,6 +768,55 @@ server.tool(
 );
 
 
+
+server.tool(
+  'web_search',
+  'Search the web using the Brave Search API. Returns titles, URLs, and descriptions for the top results.',
+  {
+    query: z.string().describe('The search query'),
+  },
+  async (args) => {
+    const requestId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const responsesDir = path.join(IPC_DIR, 'responses');
+    fs.mkdirSync(responsesDir, { recursive: true });
+    const responseFile = path.join(responsesDir, requestId + '.json');
+
+    const data = {
+      type: 'web_search',
+      requestId,
+      query: args.query,
+      chatJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const timeout = 20000;
+    const interval = 300;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, interval));
+      if (fs.existsSync(responseFile)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          if (result.error) {
+            return { content: [{ type: 'text' as const, text: 'web_search error: ' + result.error }], isError: true };
+          }
+          return { content: [{ type: 'text' as const, text: result.output }] };
+        } catch {
+          fs.unlinkSync(responseFile);
+          return { content: [{ type: 'text' as const, text: 'Failed to parse web_search response' }], isError: true };
+        }
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'web_search timed out after 20s' }], isError: true };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

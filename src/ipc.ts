@@ -1548,7 +1548,10 @@ export async function processTaskIpc(
       fs.mkdirSync(wsResponseDir, { recursive: true });
       const wsResponseFile = path.join(wsResponseDir, data.requestId + '.json');
       const wsQuery = String(data.query);
-      logger.info({ query: wsQuery, sourceGroup }, 'Running web_search via Brave API');
+      logger.info(
+        { query: wsQuery, sourceGroup },
+        'Running web_search via Brave API',
+      );
 
       (async () => {
         try {
@@ -1556,11 +1559,19 @@ export async function processTaskIpc(
           const wsEnv = readEnvFile(['OP_SERVICE_ACCOUNT_TOKEN']);
           const wsOpToken = wsEnv['OP_SERVICE_ACCOUNT_TOKEN'];
           if (!wsOpToken) {
-            fs.writeFileSync(wsResponseFile, JSON.stringify({ error: 'OP_SERVICE_ACCOUNT_TOKEN not configured' }));
+            fs.writeFileSync(
+              wsResponseFile,
+              JSON.stringify({
+                error: 'OP_SERVICE_ACCOUNT_TOKEN not configured',
+              }),
+            );
             return;
           }
           const { execFile: wsExecFile } = await import('child_process');
-          const wsOpEnv = { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: wsOpToken };
+          const wsOpEnv = {
+            ...process.env,
+            OP_SERVICE_ACCOUNT_TOKEN: wsOpToken,
+          };
 
           const wsApiKey = await new Promise<string>((resolve, reject) => {
             wsExecFile(
@@ -1569,7 +1580,13 @@ export async function processTaskIpc(
               { env: wsOpEnv, timeout: 15000 },
               (err, stdout, stderr) => {
                 if (err || !stdout.trim()) {
-                  reject(new Error((stderr && stderr.trim()) || (err && err.message) || 'op read failed'));
+                  reject(
+                    new Error(
+                      (stderr && stderr.trim()) ||
+                        (err && err.message) ||
+                        'op read failed',
+                    ),
+                  );
                 } else {
                   resolve(stdout.trim());
                 }
@@ -1577,35 +1594,60 @@ export async function processTaskIpc(
             );
           });
 
-          const wsUrl = 'https://api.search.brave.com/res/v1/web/search?q=' + encodeURIComponent(wsQuery) + '&count=10';
+          const wsUrl =
+            'https://api.search.brave.com/res/v1/web/search?q=' +
+            encodeURIComponent(wsQuery) +
+            '&count=10';
           const wsResp = await fetch(wsUrl, {
             headers: {
               'X-Subscription-Token': wsApiKey,
-              'Accept': 'application/json',
+              Accept: 'application/json',
             },
           });
 
           if (!wsResp.ok) {
-            fs.writeFileSync(wsResponseFile, JSON.stringify({ error: 'Brave API error: ' + wsResp.status + ' ' + wsResp.statusText }));
+            fs.writeFileSync(
+              wsResponseFile,
+              JSON.stringify({
+                error:
+                  'Brave API error: ' + wsResp.status + ' ' + wsResp.statusText,
+              }),
+            );
             return;
           }
 
-          const wsJson = await wsResp.json() as { web?: { results?: Array<{ title: string; url: string; description?: string }> } };
+          const wsJson = (await wsResp.json()) as {
+            web?: {
+              results?: Array<{
+                title: string;
+                url: string;
+                description?: string;
+              }>;
+            };
+          };
           const wsResults = wsJson?.web?.results ?? [];
 
           if (wsResults.length === 0) {
-            fs.writeFileSync(wsResponseFile, JSON.stringify({ output: 'No results found for: ' + wsQuery }));
+            fs.writeFileSync(
+              wsResponseFile,
+              JSON.stringify({ output: 'No results found for: ' + wsQuery }),
+            );
             return;
           }
 
-          const wsFormatted = wsResults.map((r, i) => {
-            const line1 = String(i + 1) + '. ' + r.title;
-            const line2 = '   ' + r.url;
-            const line3 = r.description ? '\n   ' + r.description : '';
-            return line1 + '\n' + line2 + line3;
-          }).join('\n\n');
+          const wsFormatted = wsResults
+            .map((r, i) => {
+              const line1 = String(i + 1) + '. ' + r.title;
+              const line2 = '   ' + r.url;
+              const line3 = r.description ? '\n   ' + r.description : '';
+              return line1 + '\n' + line2 + line3;
+            })
+            .join('\n\n');
 
-          fs.writeFileSync(wsResponseFile, JSON.stringify({ output: wsFormatted }));
+          fs.writeFileSync(
+            wsResponseFile,
+            JSON.stringify({ output: wsFormatted }),
+          );
         } catch (wsErr: unknown) {
           const wsMsg = wsErr instanceof Error ? wsErr.message : String(wsErr);
           fs.writeFileSync(wsResponseFile, JSON.stringify({ error: wsMsg }));

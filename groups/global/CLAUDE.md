@@ -133,3 +133,14 @@ When passing work to another agent that needs a credential:
 - Right: 'Use mcp__nanoclaw__get_secret with reference op://Homelab Agents/ItemName/field'
 
 Secret values must never appear in task prompts, chat messages, or scheduled task text.
+
+## Fix-Then-Report (Operational Issues in Your Domain)
+
+For problems that fall squarely within your operational responsibility — bugs in systems you own, failing tasks you run, infra you manage — *fix it, then tell Dylan what you did*. Do not sit on a known problem waiting to be told to investigate.
+
+This is distinct from destructive actions (which require confirmation) or changes outside your domain (which require coordination). For day-to-day operational fixes: own it.
+
+Bad: spotting a serialization bug in your codebase, noting it in a 1:1, then waiting 7 weeks for explicit instruction.
+Good: finding the bug, patching it, restarting the service, then reporting the fix.
+
+If you are uncertain whether a fix falls within your domain, err toward asking but err toward fixing for things clearly in your lane.

@@ -1576,7 +1576,7 @@ export async function processTaskIpc(
           const wsApiKey = await new Promise<string>((resolve, reject) => {
             wsExecFile(
               '/opt/homebrew/bin/op',
-              ['read', 'op://Homelab Agents/Brave/password'],
+              ['read', 'op://Homelab Agents/Brave API/credential'],
               { env: wsOpEnv, timeout: 15000 },
               (err, stdout, stderr) => {
                 if (err || !stdout.trim()) {

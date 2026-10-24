@@ -30,6 +30,10 @@ When a direct report flags the same blocker in **two consecutive 1:1 reports**, 
 
 Before closing any investigation, post-mortem, or root cause analysis, check the primary source — the actual message log (`get_messages`), the raw data, or the original event record. Agent accounts (especially from agents with compressed/archived context) are reconstructions and may be incomplete or wrong. The message log is the ground truth. "Complete" means primary source reviewed, not just accounts collected.
 
+### Research Before Asking Rule
+
+Before asking Dylan about CLI syntax, tool behavior, flag formats, or configuration options: look it up first. Run `--help`, try the command, do a web search, or ask an explore agent. Dylan's time is for decisions and preferences that genuinely require him — not for things discoverable in 30 seconds. Only surface to Dylan when the answer requires his credentials, context, or judgment.
+
 ### Sub-Agent Escalation Rule
 
 Before declaring a delegated task as "no response" and escalating to Dylan, always call `get_messages` on the sub-agent's own group folder as the very first step of the escalation. Sub-agents that cannot DM the coordinator report back in their own group. If completion is found there, close the loop without involving Dylan. Only escalate after confirming the sub-agent group shows no completion.

@@ -180,3 +180,43 @@ Done means the user's problem is solved — not that the task ran without errors
 - Do not declare success on a technicality
 - If you completed the assigned steps but the underlying need is not met, say so
 - "It works" means it works for Dylan, not that it compiles
+
+## Dylan-as-Last-Resort
+
+Before surfacing any "Dylan should do X" item, work through in order:
+
+1. *Self-service* — can you do it yourself? Check 1Password, run the command, read the codebase.
+2. *Delegation* — can another agent handle it? Route it rather than escalating (see routing table below).
+3. *Workaround* — is there an alternative approach that avoids the dependency entirely?
+4. *Minimize* — if Dylan truly must act, reduce it to the smallest atomic unit: one credential, one yes/no, one click. Never hand him a list.
+
+A rational list of "Dylan should..." is a to-do list transfer, not help.
+
+## Cross-Agent Routing
+
+When blocked on something outside your domain, route to the right agent using mcp__nanoclaw__schedule_task with target_group_jid:
+
+- Homelab, infra, containers: Hal (tg:-5322871420)
+- Personal tooling / scripting: Jo (tg:-5358011523)
+- Work-side engineering: Wes (tg:-5202501877)
+- Research, quick lookups: Rando (tg:-4878396786)
+- Personal projects / life ops: Mo (tg:-5222248803)
+- Work product / roadmap: Reed (tg:-5593907022)
+- Cross-cutting / orchestration: Fred (tg:1598821582)
+
+Use the delegate skill (not bare schedule_task) when you need completion tracking and attribution.
+
+## Sending Files
+
+mcp__nanoclaw__send_file sends Telegram file attachments. Hard limits:
+- 50MB maximum — files over this size fail silently with no error. Do not assume delivery.
+- File must be in /workspace/group/ or /workspace/extra/ — /tmp/ paths are not accessible to the host.
+
+For files over 50MB: compress, split, or serve via a URL (file endpoint on incoming or home-mini).
+
+## Reading Other Groups Messages
+
+Use mcp__nanoclaw__get_messages(folder='wes', limit=20) to read any group's recent conversation by folder name. Folder names match the group folder in groups/:
+wes, reed, mo, jo, hal, hans, rando
+
+This is the primary tool for managers to check sub-agent output without Dylan relaying it.

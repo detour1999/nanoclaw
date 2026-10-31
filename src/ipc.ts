@@ -1670,9 +1670,15 @@ export async function processTaskIpc(
       const credFields = (data.fields as unknown[]).map(String);
       const credPersist = !!data.persist;
 
-      const credResponseDir = path.join(resolveGroupIpcPath(sourceGroup), 'responses');
+      const credResponseDir = path.join(
+        resolveGroupIpcPath(sourceGroup),
+        'responses',
+      );
       fs.mkdirSync(credResponseDir, { recursive: true });
-      const credResponseFile = path.join(credResponseDir, credRequestId + '.json');
+      const credResponseFile = path.join(
+        credResponseDir,
+        credRequestId + '.json',
+      );
 
       (async () => {
         const ttl = { timer: null as ReturnType<typeof setTimeout> | null };
@@ -1682,10 +1688,15 @@ export async function processTaskIpc(
 
           // Get Tailscale IP
           const tailscaleIp = await new Promise<string>((resolve, reject) => {
-            execFile('tailscale', ['ip', '-4'], { timeout: 5000 }, (err, stdout) => {
-              if (err) reject(err);
-              else resolve(stdout.trim());
-            });
+            execFile(
+              'tailscale',
+              ['ip', '-4'],
+              { timeout: 5000 },
+              (err, stdout) => {
+                if (err) reject(err);
+                else resolve(stdout.trim());
+              },
+            );
           });
 
           // Credential output path (visible in container as /workspace/group/credentials/...)
@@ -1694,10 +1705,14 @@ export async function processTaskIpc(
           const credDir = path.join(GROUPS_DIR, sourceGroup, 'credentials');
           fs.mkdirSync(credDir, { recursive: true });
           const credentialPath = path.join(credDir, credFileName);
-          const containerCredPath = '/workspace/group/credentials/' + credFileName;
+          const containerCredPath =
+            '/workspace/group/credentials/' + credFileName;
 
           const fieldsHtml = credFields
-            .map(f => `<div class="field"><label>${f}</label><input type="password" name="${f}" required></div>`)
+            .map(
+              (f) =>
+                `<div class="field"><label>${f}</label><input type="password" name="${f}" required></div>`,
+            )
             .join('\n');
 
           const formHtml = `<!DOCTYPE html>
@@ -1730,12 +1745,20 @@ button:hover{background:#1d4ed8}
           let submitted = false;
           const server = http.createServer((req, res) => {
             if (req.method === 'GET' && req.url === '/') {
-              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.writeHead(200, {
+                'Content-Type': 'text/html; charset=utf-8',
+              });
               res.end(formHtml);
-            } else if (req.method === 'POST' && req.url === '/submit' && !submitted) {
+            } else if (
+              req.method === 'POST' &&
+              req.url === '/submit' &&
+              !submitted
+            ) {
               submitted = true;
               let body = '';
-              req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+              req.on('data', (chunk: Buffer) => {
+                body += chunk.toString();
+              });
               req.on('end', () => {
                 try {
                   const params = new URLSearchParams(body);
@@ -1743,15 +1766,23 @@ button:hover{background:#1d4ed8}
                   for (const field of credFields) {
                     creds[field] = params.get(field) || '';
                   }
-                  fs.writeFileSync(credentialPath, JSON.stringify(creds, null, 2));
+                  fs.writeFileSync(
+                    credentialPath,
+                    JSON.stringify(creds, null, 2),
+                  );
                   if (!credPersist) {
                     fs.writeFileSync(credentialPath + '.persist=false', '');
                   }
-                  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                  res.writeHead(200, {
+                    'Content-Type': 'text/html; charset=utf-8',
+                  });
                   res.end(doneHtml);
                   if (ttl.timer) clearTimeout(ttl.timer);
                   server.close();
-                  logger.info({ credentialPath, sourceGroup }, 'Credential submitted and written');
+                  logger.info(
+                    { credentialPath, sourceGroup },
+                    'Credential submitted and written',
+                  );
                 } catch (writeErr) {
                   logger.error({ writeErr }, 'Failed to write credential file');
                   res.writeHead(500);
@@ -1773,26 +1804,38 @@ button:hover{background:#1d4ed8}
           const url = 'http://' + tailscaleIp + ':' + addr.port + '/';
 
           // Return URL and credential path to agent immediately
-          fs.writeFileSync(credResponseFile, JSON.stringify({ url, credentialPath: containerCredPath }));
+          fs.writeFileSync(
+            credResponseFile,
+            JSON.stringify({ url, credentialPath: containerCredPath }),
+          );
           logger.info({ url, sourceGroup }, 'Credential server started');
 
           // 1-hour TTL: close server and clean up if never submitted
           ttl.timer = setTimeout(() => {
             server.close();
-            try { fs.unlinkSync(credentialPath); } catch {}
-            try { fs.unlinkSync(credentialPath + '.persist=false'); } catch {}
-            logger.info({ credentialPath, sourceGroup }, 'Credential TTL expired, cleaned up');
+            try {
+              fs.unlinkSync(credentialPath);
+            } catch {}
+            try {
+              fs.unlinkSync(credentialPath + '.persist=false');
+            } catch {}
+            logger.info(
+              { credentialPath, sourceGroup },
+              'Credential TTL expired, cleaned up',
+            );
           }, 3600000);
-
         } catch (credErr: unknown) {
-          const errMsg = credErr instanceof Error ? credErr.message : String(credErr);
-          logger.error({ err: errMsg, sourceGroup }, 'request_credential failed');
+          const errMsg =
+            credErr instanceof Error ? credErr.message : String(credErr);
+          logger.error(
+            { err: errMsg, sourceGroup },
+            'request_credential failed',
+          );
           fs.writeFileSync(credResponseFile, JSON.stringify({ error: errMsg }));
         }
       })();
       break;
     }
-
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');

@@ -817,6 +817,90 @@ server.tool(
   },
 );
 
+server.tool(
+  'request_credential',
+  "Request credentials from the user via a secure temporary web form. Starts a temporary HTTP server on the host, sends the user a URL to open, and waits for them to submit the form. Returns submitted credentials as a JSON object. Use this whenever you need a password, API key, or other credential that should never appear in chat.",
+  {
+    label: z.string().describe('Form title shown to the user, e.g. "Goodreads login for postkeeper"'),
+    fields: z.array(z.string()).describe('Field names to show on the form, e.g. ["username", "password"]'),
+    persist: z.boolean().optional().describe('If false (default), credential file is deleted after reading'),
+  },
+  async (args) => {
+    const requestId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const responsesDir = path.join(IPC_DIR, 'responses');
+    fs.mkdirSync(responsesDir, { recursive: true });
+    const responseFile = path.join(responsesDir, requestId + '.json');
+
+    const data = {
+      type: 'request_credential',
+      requestId,
+      label: args.label,
+      fields: args.fields,
+      persist: args.persist ?? false,
+      chatJid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    // Phase 1: wait for host to start the HTTP server and return { url, credentialPath }
+    const serverDeadline = Date.now() + 30000;
+    let credentialPath: string | null = null;
+
+    while (Date.now() < serverDeadline) {
+      await new Promise(r => setTimeout(r, 500));
+      if (fs.existsSync(responseFile)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          if (result.error) {
+            return { content: [{ type: 'text' as const, text: 'request_credential error: ' + result.error }], isError: true };
+          }
+          credentialPath = result.credentialPath;
+          writeIpcFile(MESSAGES_DIR, {
+            type: 'message',
+            chatJid,
+            groupFolder,
+            text: 'To continue, open this URL and enter your credentials: ' + result.url,
+            timestamp: new Date().toISOString(),
+          });
+          break;
+        } catch {
+          fs.unlinkSync(responseFile);
+          return { content: [{ type: 'text' as const, text: 'Failed to parse request_credential response' }], isError: true };
+        }
+      }
+    }
+
+    if (!credentialPath) {
+      return { content: [{ type: 'text' as const, text: 'request_credential timed out waiting for server to start (30s)' }], isError: true };
+    }
+
+    // Phase 2: poll for credential file (Dylan submitting the form), 10 min timeout
+    const credDeadline = Date.now() + 600000;
+
+    while (Date.now() < credDeadline) {
+      await new Promise(r => setTimeout(r, 500));
+      if (fs.existsSync(credentialPath)) {
+        try {
+          const creds = JSON.parse(fs.readFileSync(credentialPath, 'utf-8'));
+          if (!(args.persist ?? false)) {
+            try { fs.unlinkSync(credentialPath); } catch {}
+            try { fs.unlinkSync(credentialPath + '.persist=false'); } catch {}
+          }
+          return { content: [{ type: 'text' as const, text: JSON.stringify(creds) }] };
+        } catch {
+          return { content: [{ type: 'text' as const, text: 'Failed to read credential file' }], isError: true };
+        }
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'request_credential timed out waiting for form submission (10 min)' }], isError: true };
+  },
+);
+
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

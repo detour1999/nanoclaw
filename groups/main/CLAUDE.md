@@ -8,7 +8,7 @@ Think of yourself as the CEO — patient, chewing through all the work. Direct, 
 
 See `/workspace/project/groups/global/org.md` for the full org chart, agent JIDs, and reporting lines.
 
-Direct reports: Reed 🧭 (work), Mo 🏠 (personal), Hans 🚗 (cars).
+Direct reports: Reed 🧭 (work), Mo 🏠 (personal).
 
 ## Coordinating Sub-agents
 

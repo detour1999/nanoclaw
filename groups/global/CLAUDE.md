@@ -217,6 +217,6 @@ For files over 50MB: compress, split, or serve via a URL (file endpoint on incom
 ## Reading Other Groups Messages
 
 Use mcp__nanoclaw__get_messages(folder='wes', limit=20) to read any group's recent conversation by folder name. Folder names match the group folder in groups/:
-wes, reed, mo, jo, hal, hans, rando
+wes, reed, mo, jo, hal, hans, rando, hugo
 
 This is the primary tool for managers to check sub-agent output without Dylan relaying it.

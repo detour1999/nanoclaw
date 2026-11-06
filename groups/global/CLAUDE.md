@@ -81,6 +81,8 @@ When running on a schedule (not responding to something Dylan said), *default to
 - Only surface something to the chat (via `send_message` or unwrapped output) when Dylan genuinely needs to act: a new PR, an error, a session expiry, a finding worth his attention
 - Status chatter like "nothing new", "already synced", "no changes" stays `<internal>` always
 
+**Zero output means zero.** If a task prompt says "produce ZERO output" or "stay completely silent" — sending a message that says "nothing to report" or "no panes detected" IS producing output and violates the instruction. The urge to confirm you stayed silent is itself the problem. Run, do the work, produce nothing.
+
 ## Sharing Documents
 
 When sharing any document or file with Dylan, never send raw markdown — he can't read .md files on his phone. Always either:

@@ -48,7 +48,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { findChannel, formatMessages, formatOutbound, isNoisyMessage } from './router.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -654,6 +654,10 @@ async function main(): Promise<void> {
       }
       const text = formatOutbound(rawText);
       if (text) {
+        if (isNoisyMessage(text)) {
+          logger.debug({ jid, text }, 'Suppressed noisy scheduled-task message');
+          return;
+        }
         await channel.sendMessage(jid, text);
         const agentName = registeredGroups[jid]?.name || ASSISTANT_NAME;
         storeBotOutgoing(jid, text, agentName);
@@ -664,6 +668,10 @@ async function main(): Promise<void> {
     sendMessage: async (jid, text) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (isNoisyMessage(text)) {
+        logger.debug({ jid, text }, "Suppressed noisy IPC message");
+        return;
+      }
       await channel.sendMessage(jid, text);
       const agentName = registeredGroups[jid]?.name || ASSISTANT_NAME;
       storeBotOutgoing(jid, text, agentName);

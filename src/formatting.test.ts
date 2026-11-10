@@ -5,6 +5,7 @@ import {
   escapeXml,
   formatMessages,
   formatOutbound,
+  isNoisyMessage,
   stripInternalTags,
 } from './router.js';
 import { NewMessage } from './types.js';
@@ -252,5 +253,71 @@ describe('trigger gating (requiresTrigger interaction)', () => {
   it('non-main group with requiresTrigger=false always processes (no trigger needed)', () => {
     const msgs = [makeMsg({ content: 'hello no trigger' })];
     expect(shouldProcess(false, false, msgs)).toBe(true);
+  });
+});
+
+// --- isNoisyMessage ---
+
+describe('isNoisyMessage', () => {
+  it('suppresses nothing to report', () => {
+    expect(isNoisyMessage('nothing to report')).toBe(true);
+  });
+
+  it('suppresses no active panes', () => {
+    expect(isNoisyMessage('No active panes detected.')).toBe(true);
+  });
+
+  it('suppresses empty collector output', () => {
+    expect(isNoisyMessage('empty collector output')).toBe(true);
+  });
+
+  it('suppresses nothing new', () => {
+    expect(isNoisyMessage('nothing new')).toBe(true);
+  });
+
+  it('suppresses already synced', () => {
+    expect(isNoisyMessage('already synced')).toBe(true);
+  });
+
+  it('suppresses no changes detected', () => {
+    expect(isNoisyMessage('no changes detected')).toBe(true);
+  });
+
+  it('suppresses collector returned empty', () => {
+    expect(isNoisyMessage('collector returned empty')).toBe(true);
+  });
+
+  it('suppresses no changed panes', () => {
+    expect(isNoisyMessage('no changed panes')).toBe(true);
+  });
+
+  it('suppresses nothing qualifies', () => {
+    expect(isNoisyMessage('nothing qualifies')).toBe(true);
+  });
+
+  it('is case-insensitive', () => {
+    expect(isNoisyMessage('NOTHING TO REPORT')).toBe(true);
+    expect(isNoisyMessage('Nothing To Report')).toBe(true);
+  });
+
+  it('does not suppress real alerts', () => {
+    expect(isNoisyMessage('Task failed: timeout after 30s')).toBe(false);
+    expect(isNoisyMessage('PR #42 is ready for review')).toBe(false);
+    expect(isNoisyMessage('Disk usage at 95% on 2389-mini')).toBe(false);
+  });
+
+  it('does not suppress short messages without noise phrases', () => {
+    expect(isNoisyMessage('Done.')).toBe(false);
+    expect(isNoisyMessage('Build succeeded.')).toBe(false);
+  });
+
+  it('does not suppress long messages even if they contain noise phrases', () => {
+    const long = 'nothing to report ' + 'x'.repeat(185);
+    expect(long.length).toBeGreaterThanOrEqual(200);
+    expect(isNoisyMessage(long)).toBe(false);
+  });
+
+  it('suppresses message with noise phrase embedded in short text', () => {
+    expect(isNoisyMessage('Checked panes — nothing to report.')).toBe(true);
   });
 });

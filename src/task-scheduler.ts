@@ -19,6 +19,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { isNoisyMessage } from './router.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -189,7 +190,15 @@ async function runTask(
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          // Suppress low-signal 'nothing to report' noise from scheduled tasks
+          if (isNoisyMessage(streamedOutput.result)) {
+            logger.debug(
+              { taskId: task.id, preview: streamedOutput.result.slice(0, 80) },
+              'Suppressing noisy task output',
+            );
+          } else {
+            await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          }
           scheduleClose();
         }
         if (streamedOutput.status === 'success') {

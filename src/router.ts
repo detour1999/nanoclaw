@@ -41,6 +41,30 @@ export function formatOutbound(rawText: string): string {
   return text;
 }
 
+const NOISE_PATTERNS = [
+  'nothing to report',
+  'nothing qualifies',
+  'empty collector output',
+  'no active panes',
+  'collector returned empty',
+  'no changed panes',
+  'nothing new',
+  'already synced',
+  'no changes detected',
+];
+
+/**
+ * Returns true if a bot/scheduled-task message is purely a "nothing to report"
+ * confirmation and should be dropped before delivery. Only matches short
+ * messages (< 200 chars) to avoid suppressing real alerts that happen to
+ * contain these phrases as part of a longer message.
+ */
+export function isNoisyMessage(text: string): boolean {
+  if (text.length >= 200) return false;
+  const lower = text.toLowerCase();
+  return NOISE_PATTERNS.some((p) => lower.includes(p));
+}
+
 export function routeOutbound(
   channels: Channel[],
   jid: string,

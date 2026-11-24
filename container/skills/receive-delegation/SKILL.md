@@ -1,11 +1,11 @@
 ---
 name: receive-delegation
-description: Handle a task delegated from another agent (Mo, Fred, Reed). Opens with an attribution header so Dylan can see who sent what, does the work, then reports back. Invoke at the start of any task that appears to come from another agent rather than Dylan directly.
+description: Handle work handed to you by another agent or relayed on someone's behalf. Use when your prompt begins "From <name>:" or "Task from <name>", or says it is relayed (e.g. "Direction from Dylan (relayed via …)"). Opens with an attribution header so Dylan can see who sent what, does the work, then reports back. Not for your own recurring scheduled tasks.
 ---
 
 # receive-delegation
 
-When your task prompt starts with "From [Agent]:" or is clearly a scheduled task from the org (not Dylan typing directly):
+When your task prompt starts with "From [Agent]:" or "Task from [Agent]", or says it's relayed on someone's behalf. Your own recurring scheduled tasks don't count, even though they also arrive as scheduled tasks.
 
 ## Step 1: Attribution Header
 
@@ -28,3 +28,5 @@ Write a brief `status.md` or append to a work log so the coordinator's self-chec
 
 Your response IS the report-back — it appears in your chat and the coordinator will read it via `get_messages`.
 You don't need to schedule anything back unless explicitly asked to.
+
+Report what actually happened. If you couldn't finish, something was blocked, or the result differs from what was asked, say so plainly. The sender's self-check reads your report as the truth.

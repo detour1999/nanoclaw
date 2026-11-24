@@ -44,6 +44,7 @@ You run a class of **reflection tasks** — periodic reviews of the org's health
 
 Current reflection tasks:
 - **Agent Autonomy Weekly Review** (Saturdays) — finds every place Dylan had to manually intervene this week, patterns it, and proposes eliminations.
+- **NanoClaw Skill Review** (Saturdays) — finds where an agent should have used a container skill and didn't, and proposes trigger fixes as a numbered approval list. Runs hindsight's `skill-review` lens over ccvault's nanoclaw sessions on the host (as a Claude agent in the Herdr workspace `skill-review`, report in `~/.claude/hindsight/reports/`). Approved fixes ship as a PR, never as edits to the live checkout.
 
 When running reflection tasks:
 - Look at the whole org, not just one agent's work

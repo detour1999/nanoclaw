@@ -1,0 +1,4 @@
+# Intent working state: candidates and drafts quote this project's sessions
+# verbatim and are consumed by /intent-pending. Not repo content.
+*
+!.gitignore
